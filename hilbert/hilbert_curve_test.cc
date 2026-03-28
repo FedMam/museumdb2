@@ -12,6 +12,7 @@
 #include <random>
 
 namespace ROCKSDB_NAMESPACE {
+namespace {
 
 void TEST_1ByteFull() {
   std::vector<std::vector<VarLenNumber>> encoded(0x100, std::vector<VarLenNumber>(0x100));
@@ -157,6 +158,22 @@ void TEST_8BytesClose() {
   }
 }
 
+void TEST_PointWithHilbertValue() {
+  std::mt19937 mt(48);
+
+  for (int i = 0; i < 50000; ++i) {
+    VarLenNumber code = RandomNumber(mt, 4);
+    VarLenPoint2D point = HilbertValueToPoint(code);
+
+    VarLenPoint2DWithHilbertValue hpoint1(code), hpoint2(point);
+
+    assert(hpoint1.GetNumberLength() == hpoint2.GetNumberLength());
+    assert(hpoint1.GetHilbertValue() == hpoint2.GetHilbertValue());
+    assert(hpoint1.GetPoint() == hpoint2.GetPoint());
+  }
+}
+
+}
 }
 
 #define TEST(test_name) { ROCKSDB_NAMESPACE::TEST_ ## test_name(); std::cout << ("=== " #test_name " passed successfully") << std::endl; }
@@ -170,5 +187,6 @@ int main(void) {
   TEST(19BytesRandom);
   TEST(2BytesClose);
   TEST(8BytesClose);
+  TEST(PointWithHilbertValue);
   return 0;
 }

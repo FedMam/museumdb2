@@ -9,6 +9,7 @@
 #include <iostream>
 
 namespace ROCKSDB_NAMESPACE {
+namespace {
 
 void TEST_Default() {
   VarLenNumber x(500);
@@ -356,6 +357,7 @@ void TEST_Point() {
   assert(point3.GetY() == VarLenNumber(1, 0xbcu));
 }
 
+}
 }
 
 #define TEST(test_name) { ROCKSDB_NAMESPACE::TEST_ ## test_name(); std::cout << ("=== " #test_name " passed successfully") << std::endl; }

@@ -23,10 +23,14 @@ VarLenPoint2D HilbertValueToPoint(const VarLenNumber& hilbertValue);
 // A wrapper of VarLenPoint2D that automatically computes the Hilbert value
 // for that point.
 struct VarLenPoint2DWithHilbertValue {
-  VarLenPoint2DWithHilbertValue(const VarLenPoint2D& point)
+  explicit VarLenPoint2DWithHilbertValue(const VarLenPoint2D& point)
     : point_(point),
       hilbert_value_(PointToHilbertValue(point)) { }
   
+  explicit VarLenPoint2DWithHilbertValue(const VarLenNumber& hilbertValue)
+    : point_(HilbertValueToPoint(hilbertValue)),
+      hilbert_value_(hilbertValue) { }
+
   inline const VarLenPoint2D& GetPoint() const { return point_; }
 
   inline const VarLenNumber& GetHilbertValue() const { return hilbert_value_; }

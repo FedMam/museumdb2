@@ -11,6 +11,8 @@
 #include <vector>
 
 namespace ROCKSDB_NAMESPACE {
+namespace {
+
 void TEST_RectangleSmoke() {
   VarLenRectangle rect(
     VarLenNumber(2, 0x1234u),
@@ -286,6 +288,7 @@ void TEST_MBRDifferentLength() {
           mbr.GetBottom() == big.GetBottom());
 }
 
+}
 }
 
 #define TEST(test_name) { ROCKSDB_NAMESPACE::TEST_ ## test_name(); std::cout << ("=== " #test_name " passed successfully") << std::endl; }
