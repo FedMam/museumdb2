@@ -52,7 +52,7 @@ struct RTreeNode;
 // additions/replacements of objects. Multiple objects at a single point are not allowed.
 // However note that this structure does not support deletions, since we
 // are not going to need them for the SER-tree index implementation.
-// WARNING: all point parameters of the queries to this structure must
+// WARNING: all point parameters of the InsertOrReplace queries to this structure must
 // have their coordinates be of the same byte length, defined by the number_length
 // constructor parameter. An error will be thrown if this condition is not
 // satisfied.

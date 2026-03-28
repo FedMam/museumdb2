@@ -235,6 +235,8 @@ std::vector<RTreeLeafNodeEntry<TItem>> RTree<TItem>::RangeQuery(const VarLenRect
 
 template<typename TItem>
 bool RTree<TItem>::InsertOrReplace(const VarLenPoint2DWithHilbertValue& key_point, const TItem* item) {
+  VerifyPointLength_(key_point);
+
   RTreeNode<TItem>* leaf_node = ChooseLeaf_(key_point);
 
   return InsertIntoLeafNode_(leaf_node, RTreeLeafNodeEntry(key_point, item));
