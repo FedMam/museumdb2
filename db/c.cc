@@ -4747,6 +4747,26 @@ double rocksdb_options_get_blob_gc_force_threshold(rocksdb_options_t* opt) {
   return opt->rep.blob_garbage_collection_force_threshold;
 }
 
+void rocksdb_options_set_read_triggered_compaction_threshold(
+    rocksdb_options_t* opt, double val) {
+  opt->rep.read_triggered_compaction_threshold = val;
+}
+
+double rocksdb_options_get_read_triggered_compaction_threshold(
+    rocksdb_options_t* opt) {
+  return opt->rep.read_triggered_compaction_threshold;
+}
+
+void rocksdb_options_set_max_compaction_trigger_wakeup_seconds(
+    rocksdb_options_t* opt, uint64_t val) {
+  opt->rep.max_compaction_trigger_wakeup_seconds = val;
+}
+
+uint64_t rocksdb_options_get_max_compaction_trigger_wakeup_seconds(
+    rocksdb_options_t* opt) {
+  return opt->rep.max_compaction_trigger_wakeup_seconds;
+}
+
 void rocksdb_options_set_blob_compaction_readahead_size(rocksdb_options_t* opt,
                                                         uint64_t val) {
   opt->rep.blob_compaction_readahead_size = val;
@@ -5802,6 +5822,16 @@ uint64_t rocksdb_perfcontext_metric(rocksdb_perfcontext_t* context,
       return rep->internal_range_del_reseek_count;
     case rocksdb_block_read_cpu_time:
       return rep->block_read_cpu_time;
+    case rocksdb_data_block_read_byte:
+      return rep->data_block_read_byte;
+    case rocksdb_index_block_read_byte:
+      return rep->index_block_read_byte;
+    case rocksdb_filter_block_read_byte:
+      return rep->filter_block_read_byte;
+    case rocksdb_compression_dict_block_read_byte:
+      return rep->compression_dict_block_read_byte;
+    case rocksdb_metadata_block_read_byte:
+      return rep->metadata_block_read_byte;
     default:
       break;
   }

@@ -4331,14 +4331,26 @@ TEST_P(BlockBasedTableTest, BlockReadCountTest) {
         get_perf_context()->Reset();
         ASSERT_OK(reader->Get(ReadOptions(), encoded_key, &get_context,
                               moptions.prefix_extractor.get()));
+        const uint64_t total_classified_bytes =
+            get_perf_context()->data_block_read_byte +
+            get_perf_context()->index_block_read_byte +
+            get_perf_context()->filter_block_read_byte +
+            get_perf_context()->compression_dict_block_read_byte +
+            get_perf_context()->metadata_block_read_byte;
+        ASSERT_EQ(get_perf_context()->block_read_byte, total_classified_bytes);
         if (index_and_filter_in_cache) {
           // data, index and filter block
           ASSERT_EQ(get_perf_context()->block_read_count, 3);
           ASSERT_EQ(get_perf_context()->index_block_read_count, 1);
           ASSERT_EQ(get_perf_context()->filter_block_read_count, 1);
+          ASSERT_GT(get_perf_context()->data_block_read_byte, 0);
+          ASSERT_GT(get_perf_context()->index_block_read_byte, 0);
+          ASSERT_GT(get_perf_context()->filter_block_read_byte, 0);
         } else {
           // just the data block
           ASSERT_EQ(get_perf_context()->block_read_count, 1);
+          ASSERT_EQ(get_perf_context()->block_read_byte,
+                    get_perf_context()->data_block_read_byte);
         }
         ASSERT_EQ(get_context.State(), GetContext::kFound);
         ASSERT_STREQ(value.data(), "hello");
@@ -4357,6 +4369,13 @@ TEST_P(BlockBasedTableTest, BlockReadCountTest) {
         get_perf_context()->Reset();
         ASSERT_OK(reader->Get(ReadOptions(), encoded_key, &get_context,
                               moptions.prefix_extractor.get()));
+        const uint64_t total_classified_bytes =
+            get_perf_context()->data_block_read_byte +
+            get_perf_context()->index_block_read_byte +
+            get_perf_context()->filter_block_read_byte +
+            get_perf_context()->compression_dict_block_read_byte +
+            get_perf_context()->metadata_block_read_byte;
+        ASSERT_EQ(get_perf_context()->block_read_byte, total_classified_bytes);
         ASSERT_EQ(get_context.State(), GetContext::kNotFound);
       }
 
@@ -4370,6 +4389,8 @@ TEST_P(BlockBasedTableTest, BlockReadCountTest) {
           // with full-filter, we read filter first and then we stop
           ASSERT_EQ(get_perf_context()->block_read_count, 1);
           ASSERT_EQ(get_perf_context()->filter_block_read_count, 1);
+          ASSERT_EQ(get_perf_context()->block_read_byte,
+                    get_perf_context()->filter_block_read_byte);
         }
       } else {
         // filter is already in memory and it figures out that the key doesn't
@@ -5836,8 +5857,12 @@ TEST_P(BlockBasedTableTest, PropertiesBlockRestartPointTest) {
     auto metaindex_handle = footer.metaindex_handle();
     BlockContents metaindex_contents;
 
+    get_perf_context()->Reset();
     BlockFetchHelper(metaindex_handle, BlockType::kMetaIndex,
                      &metaindex_contents);
+    ASSERT_GT(get_perf_context()->metadata_block_read_byte, 0);
+    ASSERT_EQ(get_perf_context()->block_read_byte,
+              get_perf_context()->metadata_block_read_byte);
     Block metaindex_block(std::move(metaindex_contents));
 
     std::unique_ptr<InternalIterator> meta_iter(metaindex_block.NewDataIterator(
@@ -5849,8 +5874,12 @@ TEST_P(BlockBasedTableTest, PropertiesBlockRestartPointTest) {
                                     &properties_handle));
     ASSERT_FALSE(properties_handle.IsNull());
     BlockContents properties_contents;
+    get_perf_context()->Reset();
     BlockFetchHelper(properties_handle, BlockType::kProperties,
                      &properties_contents);
+    ASSERT_GT(get_perf_context()->metadata_block_read_byte, 0);
+    ASSERT_EQ(get_perf_context()->block_read_byte,
+              get_perf_context()->metadata_block_read_byte);
     Block properties_block(std::move(properties_contents));
 
     ASSERT_EQ(properties_block.NumRestarts(), 1u);
@@ -7016,10 +7045,10 @@ class ExternalTableTest : public DBTestBase {
 
     Status Get(const ReadOptions& /*read_options*/, const Slice& key,
                const SliceTransform* /*prefix_extractor*/,
-               std::string* value) override {
+               PinnableSlice* value) override {
       auto iter = kv_map_.find(key.ToString());
       if (iter != kv_map_.end()) {
-        value->assign(iter->second);
+        value->PinSelf(iter->second);
         return Status::OK();
       }
       return Status::NotFound();
@@ -7028,7 +7057,7 @@ class ExternalTableTest : public DBTestBase {
     void MultiGet(const ReadOptions& read_options,
                   const std::vector<Slice>& keys,
                   const SliceTransform* prefix_extractor,
-                  std::vector<std::string>* values,
+                  std::vector<PinnableSlice>* values,
                   std::vector<Status>* statuses) override {
       values->resize(keys.size());
       statuses->resize(keys.size());
@@ -7060,6 +7089,38 @@ class ExternalTableTest : public DBTestBase {
     std::map<std::string, std::string> kv_map_;
     DummyExternalTableFile file_;
     bool support_property_block_;
+  };
+
+  // A reader that pins values from its internal buffer, exercising the
+  // zero-copy path in ExternalTableReaderAdapter::Get().
+  class PinnedDummyExternalTableReader : public DummyExternalTableReader {
+   public:
+    using DummyExternalTableReader::DummyExternalTableReader;
+
+    Status Get(const ReadOptions& /*read_options*/, const Slice& key,
+               const SliceTransform* /*prefix_extractor*/,
+               PinnableSlice* value) override {
+      auto it = pinned_data_.find(key.ToString());
+      if (it != pinned_data_.end()) {
+        Slice s(it->second);
+        value->PinSlice(s, &PinCleanup, &pin_cleanup_count_, nullptr);
+        return Status::OK();
+      }
+      return Status::NotFound();
+    }
+
+    void SetPinnedData(const std::map<std::string, std::string>& data) {
+      pinned_data_ = data;
+    }
+
+    int pin_cleanup_count() const { return pin_cleanup_count_; }
+
+   private:
+    static void PinCleanup(void* arg1, void* /*arg2*/) {
+      (*static_cast<int*>(arg1))++;
+    }
+    std::map<std::string, std::string> pinned_data_;
+    int pin_cleanup_count_ = 0;
   };
 
   class DummyExternalTableBuilder : public ExternalTableBuilder {
@@ -7134,6 +7195,37 @@ class ExternalTableTest : public DBTestBase {
    private:
     bool support_property_block_;
   };
+
+  class PinnedDummyExternalTableFactory : public ExternalTableFactory {
+   public:
+    const char* Name() const override {
+      return "PinnedDummyExternalTableFactory";
+    }
+
+    Status NewTableReader(
+        const ReadOptions& /*read_options*/, const std::string& file_path,
+        const ExternalTableOptions& /*topts*/,
+        std::unique_ptr<ExternalTableReader>* table_reader) const override {
+      auto* reader =
+          new PinnedDummyExternalTableReader(file_path,
+                                             /*support_property_block=*/true);
+      last_reader_ = reader;
+      table_reader->reset(reader);
+      return Status::OK();
+    }
+
+    ExternalTableBuilder* NewTableBuilder(
+        const ExternalTableBuilderOptions& /*opts*/,
+        const std::string& file_path, FSWritableFile* file) const override {
+      return new DummyExternalTableBuilder(file_path, file,
+                                           /*support_property_block=*/true);
+    }
+
+    PinnedDummyExternalTableReader* last_reader() const { return last_reader_; }
+
+   private:
+    mutable PinnedDummyExternalTableReader* last_reader_ = nullptr;
+  };
 };
 
 TEST_F(ExternalTableTest, BasicTest) {
@@ -7171,11 +7263,11 @@ TEST_F(ExternalTableTest, BasicTest) {
   iter->Next();
   ASSERT_FALSE(iter->Valid());
 
-  std::string val;
+  PinnableSlice val;
   ASSERT_OK(reader->Get({}, "foo", nullptr, &val));
   ASSERT_EQ(val, "bar");
 
-  std::vector<std::string> vals;
+  std::vector<PinnableSlice> vals;
   std::vector<Status> statuses;
   reader->MultiGet({}, {"foo", "bar"}, nullptr, &vals, &statuses);
   ASSERT_EQ(vals.size(), 2);
@@ -7203,22 +7295,169 @@ TEST_F(ExternalTableTest, SstReaderTest) {
   std::unique_ptr<SstFileWriter> writer;
   writer.reset(new SstFileWriter(EnvOptions(), options));
   ASSERT_OK(writer->Open(ingest_file));
-  ASSERT_OK(writer->Put("foo", "bar"));
+  ASSERT_OK(writer->Put("a", "val_a"));
+  ASSERT_OK(writer->Put("b", "val_b"));
+  ASSERT_OK(writer->Put("c", "val_c"));
   ASSERT_OK(writer->Finish());
   writer.reset();
 
   std::unique_ptr<SstFileReader> reader(new SstFileReader(options));
   ASSERT_OK(reader->Open(ingest_file));
 
+  // Test iterator
   ReadOptions ro;
   std::unique_ptr<Iterator> iter(reader->NewIterator(ro));
   ASSERT_NE(iter, nullptr);
-  iter->Seek("foo");
+  iter->Seek("a");
   ASSERT_TRUE(iter->Valid() && iter->status().ok());
-  ASSERT_EQ(iter->value(), "bar");
+  ASSERT_EQ(iter->value(), "val_a");
+  iter->Next();
+  ASSERT_TRUE(iter->Valid());
+  ASSERT_EQ(iter->value(), "val_b");
+  iter->Next();
+  ASSERT_TRUE(iter->Valid());
+  ASSERT_EQ(iter->value(), "val_c");
   iter->Next();
   ASSERT_FALSE(iter->Valid());
   ASSERT_TRUE(iter->status().ok());
+
+  // Test MultiGet
+  std::vector<Slice> keys = {"a", "b", "missing", "c"};
+  std::vector<std::string> values;
+  std::vector<Status> statuses = reader->MultiGet(ReadOptions(), keys, &values);
+  ASSERT_EQ(values.size(), keys.size());
+  ASSERT_EQ(statuses.size(), keys.size());
+  ASSERT_OK(statuses[0]);
+  ASSERT_EQ(values[0], "val_a");
+  ASSERT_OK(statuses[1]);
+  ASSERT_EQ(values[1], "val_b");
+  ASSERT_TRUE(statuses[2].IsNotFound());
+  ASSERT_OK(statuses[3]);
+  ASSERT_EQ(values[3], "val_c");
+}
+
+TEST_F(ExternalTableTest, PinnedGetTest) {
+  if (encrypted_env_) {
+    ROCKSDB_GTEST_SKIP("Test requires non-encrypted environment");
+    return;
+  }
+  Options options = GetDefaultOptions();
+  auto factory = std::make_shared<PinnedDummyExternalTableFactory>();
+  options.table_factory = NewExternalTableFactory(factory);
+  Reopen(options);
+
+  std::string ingest_file = dbname_ + "/test.immutabledb";
+
+  std::unique_ptr<SstFileWriter> writer;
+  writer.reset(new SstFileWriter(EnvOptions(), options));
+  ASSERT_OK(writer->Open(ingest_file));
+  ASSERT_OK(writer->Put("key1", "val1"));
+  ASSERT_OK(writer->Put("key2", "val2"));
+  ASSERT_OK(writer->Finish());
+  writer.reset();
+
+  IngestExternalFileOptions ifo;
+  ASSERT_OK(db_->IngestExternalFile({ingest_file}, ifo));
+  ASSERT_NE(factory->last_reader(), nullptr);
+
+  factory->last_reader()->SetPinnedData(
+      {{"key1", "pinned_val1"}, {"key2", "pinned_val2"}});
+
+  PinnableSlice pinnable;
+  ASSERT_OK(
+      db_->Get(ReadOptions(), db_->DefaultColumnFamily(), "key1", &pinnable));
+  ASSERT_EQ(pinnable.ToString(), "pinned_val1");
+  ASSERT_TRUE(pinnable.IsPinned());
+  pinnable.Reset();
+
+  ASSERT_OK(
+      db_->Get(ReadOptions(), db_->DefaultColumnFamily(), "key2", &pinnable));
+  ASSERT_EQ(pinnable.ToString(), "pinned_val2");
+  ASSERT_TRUE(pinnable.IsPinned());
+  pinnable.Reset();
+
+  // Verify cleanup ran for both Gets
+  ASSERT_EQ(factory->last_reader()->pin_cleanup_count(), 2);
+
+  // Verify NotFound still works
+  Status s =
+      db_->Get(ReadOptions(), db_->DefaultColumnFamily(), "missing", &pinnable);
+  ASSERT_TRUE(s.IsNotFound());
+
+  // Test MultiGet with PinnableSlice to exercise the batched pin path
+  const size_t num_keys = 3;
+  std::array<Slice, num_keys> mg_keys = {Slice("key1"), Slice("missing"),
+                                         Slice("key2")};
+  std::array<PinnableSlice, num_keys> mg_values;
+  std::array<Status, num_keys> mg_statuses;
+  db_->MultiGet(ReadOptions(), db_->DefaultColumnFamily(), num_keys,
+                mg_keys.data(), mg_values.data(), mg_statuses.data());
+
+  ASSERT_OK(mg_statuses[0]);
+  ASSERT_EQ(mg_values[0].ToString(), "pinned_val1");
+  ASSERT_TRUE(mg_values[0].IsPinned());
+
+  ASSERT_TRUE(mg_statuses[1].IsNotFound());
+
+  ASSERT_OK(mg_statuses[2]);
+  ASSERT_EQ(mg_values[2].ToString(), "pinned_val2");
+  ASSERT_TRUE(mg_values[2].IsPinned());
+
+  // Reset PinnableSlices to trigger cleanups
+  for (auto& v : mg_values) {
+    v.Reset();
+  }
+  ASSERT_EQ(factory->last_reader()->pin_cleanup_count(), 4);
+}
+
+TEST_F(ExternalTableTest, SstReaderPinnableMultiGetTest) {
+  if (encrypted_env_) {
+    ROCKSDB_GTEST_SKIP("Test requires non-encrypted environment");
+    return;
+  }
+  Options options = GetDefaultOptions();
+  std::string dbname =
+      test::PerThreadDBPath("sst_reader_pinnable_multiget_test");
+  std::string sst_file = dbname + "/test.sst";
+  ASSERT_OK(options.env->CreateDirIfMissing(dbname));
+
+  std::unique_ptr<SstFileWriter> writer(
+      new SstFileWriter(EnvOptions(), options));
+  ASSERT_OK(writer->Open(sst_file));
+  ASSERT_OK(writer->Put("a", "val_a"));
+  ASSERT_OK(writer->Put("b", "val_b"));
+  ASSERT_OK(writer->Put("c", "val_c"));
+  ASSERT_OK(writer->Finish());
+  writer.reset();
+
+  std::unique_ptr<SstFileReader> reader(new SstFileReader(options));
+  ASSERT_OK(reader->Open(sst_file));
+
+  // Test PinnableSlice MultiGet
+  std::vector<Slice> keys = {"a", "b", "missing", "c"};
+  std::vector<PinnableSlice> values;
+  std::vector<Status> statuses = reader->MultiGet(ReadOptions(), keys, &values);
+  ASSERT_EQ(values.size(), keys.size());
+  ASSERT_EQ(statuses.size(), keys.size());
+  ASSERT_OK(statuses[0]);
+  ASSERT_EQ(values[0].ToString(), "val_a");
+  ASSERT_OK(statuses[1]);
+  ASSERT_EQ(values[1].ToString(), "val_b");
+  ASSERT_TRUE(statuses[2].IsNotFound());
+  ASSERT_OK(statuses[3]);
+  ASSERT_EQ(values[3].ToString(), "val_c");
+
+  // Verify std::string MultiGet wrapper still works
+  std::vector<std::string> str_values;
+  statuses = reader->MultiGet(ReadOptions(), keys, &str_values);
+  ASSERT_EQ(str_values.size(), keys.size());
+  ASSERT_OK(statuses[0]);
+  ASSERT_EQ(str_values[0], "val_a");
+  ASSERT_OK(statuses[1]);
+  ASSERT_EQ(str_values[1], "val_b");
+  ASSERT_TRUE(statuses[2].IsNotFound());
+  ASSERT_OK(statuses[3]);
+  ASSERT_EQ(str_values[3], "val_c");
 }
 
 TEST_F(ExternalTableTest, ExternalFileChecksumTest) {

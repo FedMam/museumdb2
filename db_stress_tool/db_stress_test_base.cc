@@ -2131,8 +2131,9 @@ Status StressTest::TestGetLiveFilesMetaData() const {
 
 Status StressTest::TestGetLiveFilesStorageInfo() const {
   std::vector<LiveFileStorageInfo> live_file_storage_info;
-  return db_->GetLiveFilesStorageInfo(LiveFilesStorageInfoOptions(),
-                                      &live_file_storage_info);
+  LiveFilesStorageInfoOptions live_opts;
+  live_opts.atomic_flush = FLAGS_checkpoint_atomic_flush;
+  return db_->GetLiveFilesStorageInfo(live_opts, &live_file_storage_info);
 }
 
 Status StressTest::TestGetAllColumnFamilyMetaData() const {
@@ -2459,11 +2460,19 @@ Status StressTest::TestBackupRestore(
       // lock and wait on a background operation (flush).
       create_opts.flush_before_backup = true;
     }
+    if (FLAGS_atomic_flush) {
+      // When atomic flush is enabled for the DB, use it for backup too.
+      // This ensures cross-CF consistency without needing WAL files.
+      // flush_before_backup must be true for atomic_flush to take effect.
+      create_opts.flush_before_backup = true;
+      create_opts.atomic_flush = true;
+    }
     create_opts.decrease_background_thread_cpu_priority = thread->rand.OneIn(2);
     create_opts.background_thread_cpu_priority = static_cast<CpuPriority>(
         thread->rand.Next() % (static_cast<int>(CpuPriority::kHigh) + 1));
     create_backup_opt_oss << "flush_before_backup: "
                           << create_opts.flush_before_backup
+                          << ", atomic_flush: " << create_opts.atomic_flush
                           << ", decrease_background_thread_cpu_priority: "
                           << create_opts.decrease_background_thread_cpu_priority
                           << ", background_thread_cpu_priority: "
@@ -2781,7 +2790,8 @@ Status StressTest::TestApproximateSize(
     // Call GetApproximateSizes
     SizeApproximationOptions sao;
     sao.include_memtables = thread->rand.OneIn(2);
-    if (sao.include_memtables) {
+    sao.include_blob_files = thread->rand.OneIn(2);
+    if (sao.include_memtables || sao.include_blob_files) {
       sao.include_files = thread->rand.OneIn(2);
     }
     if (thread->rand.OneIn(2)) {
@@ -3708,13 +3718,6 @@ void StressTest::Open(SharedState* shared, bool reopen) {
 
   // Remote Compaction
   if (FLAGS_remote_compaction_worker_threads > 0) {
-    // TODO(jaykorean) Remove this after fix - remote worker shouldn't recover
-    // from WAL
-    if (!FLAGS_disable_wal) {
-      fprintf(stderr,
-              "WAL is not compatible with Remote Compaction in Stress Test\n");
-      exit(1);
-    }
     if ((options_.enable_blob_files ||
          options_.enable_blob_garbage_collection ||
          FLAGS_allow_setting_blob_options_dynamically)) {
@@ -4129,6 +4132,13 @@ void StressTest::Reopen(ThreadState* thread) {
     } else {
       s = db_->SyncWAL();
     }
+    if (s.IsNotSupported()) {
+      // Some WAL implementations (e.g., Warm Storage) do not support
+      // SyncWAL()/FlushWAL(sync=true) because their WritableFile is not
+      // sync-thread-safe. Fall back to FlushWAL(sync=false) to flush the
+      // internal buffer; persistence is handled by the WAL implementation.
+      s = db_->FlushWAL(/*sync=*/false);
+    }
     if (!s.ok()) {
       fprintf(stderr,
               "Error persisting WAL data which is needed before reopening the "
@@ -4429,6 +4439,10 @@ void InitializeOptionsFromFlags(
       options.compaction_options_fifo.max_data_files_size =
           FLAGS_fifo_compaction_max_data_files_size_mb * 1024 * 1024;
     }
+    if (FLAGS_fifo_compaction_max_table_files_size_mb > 0) {
+      options.compaction_options_fifo.max_table_files_size =
+          FLAGS_fifo_compaction_max_table_files_size_mb * 1024 * 1024;
+    }
     options.compaction_options_fifo.use_kv_ratio_compaction =
         FLAGS_fifo_compaction_use_kv_ratio_compaction;
   }
@@ -4495,6 +4509,8 @@ void InitializeOptionsFromFlags(
   }
   options.max_manifest_file_size = FLAGS_max_manifest_file_size;
   options.max_manifest_space_amp_pct = FLAGS_max_manifest_space_amp_pct;
+  options.verify_manifest_content_on_close =
+      FLAGS_verify_manifest_content_on_close;
   options.max_subcompactions = static_cast<uint32_t>(FLAGS_subcompactions);
   options.allow_concurrent_memtable_write =
       FLAGS_allow_concurrent_memtable_write;
@@ -4504,6 +4520,8 @@ void InitializeOptionsFromFlags(
   options.daily_offpeak_time_utc = FLAGS_daily_offpeak_time_utc;
   options.stats_dump_period_sec =
       static_cast<unsigned int>(FLAGS_stats_dump_period_sec);
+  options.max_compaction_trigger_wakeup_seconds =
+      FLAGS_max_compaction_trigger_wakeup_seconds;
   options.ttl = FLAGS_compaction_ttl;
   options.enable_pipelined_write = FLAGS_enable_pipelined_write;
   options.enable_write_thread_adaptive_yield =
@@ -4557,6 +4575,8 @@ void InitializeOptionsFromFlags(
       FLAGS_blob_garbage_collection_force_threshold;
   options.blob_compaction_readahead_size = FLAGS_blob_compaction_readahead_size;
   options.blob_file_starting_level = FLAGS_blob_file_starting_level;
+  options.read_triggered_compaction_threshold =
+      FLAGS_read_triggered_compaction_threshold;
 
   if (FLAGS_use_blob_cache) {
     if (FLAGS_use_shared_block_and_blob_cache) {

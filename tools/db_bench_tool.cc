@@ -456,6 +456,10 @@ DEFINE_int32(max_manifest_space_amp_pct,
              ROCKSDB_NAMESPACE::Options().max_manifest_space_amp_pct,
              "Max manifest space amp percentage for auto-tuning");
 
+DEFINE_bool(verify_manifest_content_on_close,
+            ROCKSDB_NAMESPACE::Options().verify_manifest_content_on_close,
+            "If true, verify MANIFEST content (CRC + decode) on DB close");
+
 DEFINE_bool(cost_write_buffer_to_cache, false,
             "The usage of memtable is costed to the block cache");
 
@@ -1129,6 +1133,15 @@ DEFINE_uint64(blob_compaction_readahead_size,
                   .blob_compaction_readahead_size,
               "[Integrated BlobDB] Compaction readahead for blob files.");
 
+DEFINE_double(read_triggered_compaction_threshold,
+              ROCKSDB_NAMESPACE::AdvancedColumnFamilyOptions()
+                  .read_triggered_compaction_threshold,
+              "Threshold for read-triggered compaction. An SST file is marked "
+              "for compaction when its sampled read frequency "
+              "(sampled_reads / file_size) exceeds this value. Collapsible "
+              "reads (NotFound, Merge, Delete results) are sampled. "
+              "0 disables the feature.");
+
 DEFINE_int32(
     blob_file_starting_level,
     ROCKSDB_NAMESPACE::AdvancedColumnFamilyOptions().blob_file_starting_level,
@@ -1765,6 +1778,10 @@ DEFINE_bool(dump_malloc_stats, true, "Dump malloc stats in LOG ");
 DEFINE_uint64(stats_dump_period_sec,
               ROCKSDB_NAMESPACE::Options().stats_dump_period_sec,
               "Gap between printing stats to log in seconds");
+DEFINE_uint64(
+    max_compaction_trigger_wakeup_seconds,
+    ROCKSDB_NAMESPACE::Options().max_compaction_trigger_wakeup_seconds,
+    "Maximum interval in seconds between periodic compaction trigger checks.");
 DEFINE_uint64(stats_persist_period_sec,
               ROCKSDB_NAMESPACE::Options().stats_persist_period_sec,
               "Gap between persisting stats in seconds");
@@ -4411,6 +4428,8 @@ class Benchmark {
     options.dump_malloc_stats = FLAGS_dump_malloc_stats;
     options.stats_dump_period_sec =
         static_cast<unsigned int>(FLAGS_stats_dump_period_sec);
+    options.max_compaction_trigger_wakeup_seconds =
+        FLAGS_max_compaction_trigger_wakeup_seconds;
     options.stats_persist_period_sec =
         static_cast<unsigned int>(FLAGS_stats_persist_period_sec);
     options.persist_stats_to_disk = FLAGS_persist_stats_to_disk;
@@ -4437,6 +4456,8 @@ class Benchmark {
     }
     options.max_manifest_file_size = FLAGS_max_manifest_file_size;
     options.max_manifest_space_amp_pct = FLAGS_max_manifest_space_amp_pct;
+    options.verify_manifest_content_on_close =
+        FLAGS_verify_manifest_content_on_close;
     options.arena_block_size = FLAGS_arena_block_size;
     options.write_buffer_size = FLAGS_write_buffer_size;
     options.max_write_buffer_number = FLAGS_max_write_buffer_number;
@@ -4988,6 +5009,8 @@ class Benchmark {
     options.blob_compaction_readahead_size =
         FLAGS_blob_compaction_readahead_size;
     options.blob_file_starting_level = FLAGS_blob_file_starting_level;
+    options.read_triggered_compaction_threshold =
+        FLAGS_read_triggered_compaction_threshold;
 
     if (FLAGS_readonly && FLAGS_transaction_db) {
       fprintf(stderr, "Cannot use readonly flag with transaction_db\n");

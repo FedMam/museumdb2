@@ -323,6 +323,13 @@ DEFINE_int32(
     "OK or violate any internal assertion. If N == 0, do not call the "
     "interface.");
 
+DEFINE_bool(
+    checkpoint_atomic_flush, false,
+    "If true, when calling GetLiveFilesStorageInfo (e.g., during checkpoint), "
+    "use LiveFilesStorageInfoOptions::atomic_flush=true to force atomic flush "
+    "of all column families regardless of the DBOptions::atomic_flush setting. "
+    "This exercises the per-request atomic flush override code path.");
+
 DEFINE_int32(
     get_all_column_family_metadata_one_in, 1000000,
     "With a chance of 1/N, call GetAllColumnFamilyMetaData to verify if it "
@@ -426,7 +433,16 @@ DEFINE_bool(fifo_allow_compaction, false,
 DEFINE_uint64(fifo_compaction_max_data_files_size_mb, 0,
               "If non-zero, set "
               "`Options::compaction_options_fifo.max_data_files_size` to this "
-              "value (in MB). Only takes effect with FIFO compaction.");
+              "value (in MB). Only takes effect with FIFO compaction. "
+              "When non-zero, overrides `max_table_files_size` for "
+              "determining when FIFO drops old SST files.");
+
+DEFINE_uint64(fifo_compaction_max_table_files_size_mb, 0,
+              "If non-zero, set "
+              "`Options::compaction_options_fifo.max_table_files_size` to this "
+              "value (in MB). Only takes effect with FIFO compaction. "
+              "When zero, uses the default (1GB). Ignored when "
+              "`fifo_compaction_max_data_files_size_mb` is non-zero.");
 
 DEFINE_bool(fifo_compaction_use_kv_ratio_compaction, false,
             "If true, set "
@@ -1020,6 +1036,9 @@ DEFINE_uint64(max_manifest_file_size, 16384,
 DEFINE_int32(max_manifest_space_amp_pct, 500,
              "Max manifest space amp percentage for auto-tuning");
 
+DEFINE_bool(verify_manifest_content_on_close, false,
+            "If true, verify MANIFEST content (CRC + decode) on DB close");
+
 DEFINE_bool(in_place_update, false, "On true, does inplace update in memtable");
 
 DEFINE_string(memtablerep, "skip_list", "");
@@ -1302,6 +1321,11 @@ DEFINE_uint64(stats_dump_period_sec,
               ROCKSDB_NAMESPACE::Options().stats_dump_period_sec,
               "Gap between printing stats to log in seconds");
 
+DEFINE_uint64(
+    max_compaction_trigger_wakeup_seconds,
+    ROCKSDB_NAMESPACE::Options().max_compaction_trigger_wakeup_seconds,
+    "Sets DB option max_compaction_trigger_wakeup_seconds.");
+
 DEFINE_bool(verification_only, false,
             "If true, tests will only execute verification step");
 extern "C" bool RocksDbIOUringEnable() { return true; }
@@ -1577,6 +1601,10 @@ DEFINE_int32(compaction_on_deletion_window_size, 100,
 DEFINE_double(compaction_on_deletion_ratio, 0.5,
               "Deletion ratio threshold for triggering compaction. "
               "Default: 0.5 (50%)");
+
+DEFINE_double(read_triggered_compaction_threshold,
+              ROCKSDB_NAMESPACE::Options().read_triggered_compaction_threshold,
+              "Sets CF option read_triggered_compaction_threshold.");
 
 DEFINE_bool(
     auto_refresh_iterator_with_snapshot,

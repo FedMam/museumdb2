@@ -168,6 +168,7 @@ default_params = {
     "manual_wal_flush_one_in": lambda: random.choice([0, 1000]),
     "file_checksum_impl": lambda: random.choice(["none", "crc32c", "xxh64", "big"]),
     "get_live_files_apis_one_in": lambda: random.choice([10000, 1000000]),
+    "checkpoint_atomic_flush": lambda: random.choice([0, 1]),
     "get_all_column_family_metadata_one_in": lambda: random.choice([10000, 1000000]),
     # Note: the following two are intentionally disabled as the corresponding
     # APIs are not guaranteed to succeed.
@@ -265,6 +266,8 @@ default_params = {
     "use_get_entity": lambda: random.choice([0] * 7 + [1]),
     "use_multi_get_entity": lambda: random.choice([0] * 7 + [1]),
     "periodic_compaction_seconds": lambda: random.choice([0, 0, 1, 2, 10, 100, 1000]),
+    "max_compaction_trigger_wakeup_seconds": lambda: random.choice([43200, 600, 30]),
+    "read_triggered_compaction_threshold": lambda: random.choice([0.0, 0.001, 0.01]),
     "daily_offpeak_time_utc": lambda: random.choice(
         ["", "", "00:00-23:59", "04:00-08:00", "23:30-03:15"]
     ),
@@ -272,13 +275,24 @@ default_params = {
     "stats_dump_period_sec": lambda: random.choice([0, 10, 600]),
     "compaction_ttl": lambda: random.choice([0, 0, 1, 2, 10, 100, 1000]),
     "fifo_allow_compaction": lambda: random.randint(0, 1),
-    "fifo_compaction_max_data_files_size_mb": lambda: random.choice([0, 100, 500]),
+    # TODO(T260692223): FIFO compaction drops old SST files when total size
+    # exceeds the limit, but the stress test expected state can't track these
+    # drops. max_table_files_size is always active (default 1GB) so set it
+    # very high. max_data_files_size when non-zero overrides max_table_files_size;
+    # randomize between 0 (fallback to max_table_files_size) and very high.
+    # Long-term, handle drops via OnCompactionBegin + SetPendingDel() as
+    # concurrent deletes.
+    "fifo_compaction_max_data_files_size_mb": lambda: random.choice(
+        [0, 100 * 1024]  # 0 = disabled (defers to max_table_files_size), 100GB
+    ),
+    "fifo_compaction_max_table_files_size_mb": 100 * 1024,  # 100GB, always high
     "fifo_compaction_use_kv_ratio_compaction": lambda: random.randint(0, 1),
     # Test small max_manifest_file_size in a smaller chance, as most of the
     # time we wnat manifest history to be preserved to help debug
     "max_manifest_file_size": lambda: random.choice(
         [t * 2048 if t < 5 else 1024 * 1024 * 1024 for t in range(1, 30)]
     ),
+    "verify_manifest_content_on_close": lambda: random.randint(0, 1),
     "max_manifest_space_amp_pct": lambda: random.choice([0, 10, 100, 1000]),
     # Sync mode might make test runs slower so running it in a smaller chance
     "sync": lambda: random.choice([1 if t == 0 else 0 for t in range(0, 20)]),
@@ -433,9 +447,7 @@ default_params = {
     # (block checksum, iteration, file checksum), bits 10-11 are when to
     # enable (local compaction, remote compaction). 0x407 = all types +
     # local, 0xC07 = all types + local + remote, 0xFFFFFFFF = all.
-    "verify_output_flags": lambda: random.choice(
-        [0] * 3 + [0x407, 0xC07, 0xFFFFFFFF]
-    ),
+    "verify_output_flags": lambda: random.choice([0] * 3 + [0x407, 0xC07, 0xFFFFFFFF]),
     "paranoid_memory_checks": lambda: random.choice([0] * 7 + [1]),
     "memtable_veirfy_per_key_checksum_on_seek": lambda: random.choice([0] * 7 + [1]),
     "memtable_batch_lookup_optimization": lambda: random.randint(0, 1),
@@ -723,6 +735,9 @@ ts_params = {
     "use_put_entity_one_in": 0,
     # TimedPut is not compatible with user-defined timestamps yet.
     "use_timed_put_one_in": 0,
+    # TrieIndexFactory requires plain BytewiseComparator, but timestamps use
+    # BytewiseComparator.u64ts.
+    "use_trie_index": 0,
     # when test_best_efforts_recovery == true, disable_wal becomes 0.
     # TODO: Re-enable this once we fix WAL + Remote Compaction in Stress Test
     "remote_compaction_worker_threads": 0,
@@ -877,8 +892,6 @@ def finalize_and_sanitize(src_params):
         dest_params["enable_blob_files"] = 0
         dest_params["enable_blob_garbage_collection"] = 0
         dest_params["allow_setting_blob_options_dynamically"] = 0
-        # TODO Fix - Remote worker shouldn't recover from WAL
-        dest_params["disable_wal"] = 1
         # Disable Incompatible Ones
         dest_params["inplace_update_support"] = 0
         dest_params["checkpoint_one_in"] = 0
@@ -900,8 +913,6 @@ def finalize_and_sanitize(src_params):
         dest_params["open_write_fault_one_in"] = 0
         dest_params["open_read_fault_one_in"] = 0
         dest_params["sync_fault_injection"] = 0
-    else:
-        dest_params["allow_resumption_one_in"] = 0
 
     # UDI now supports all operation types (Put, Delete, Merge, etc.).
     # Only parallel compression and mmap_read remain incompatible.
@@ -1003,6 +1014,7 @@ def finalize_and_sanitize(src_params):
         dest_params["file_temperature_age_thresholds"] = ""
         # Disable FIFO-specific options for non-FIFO compaction styles
         dest_params["fifo_compaction_max_data_files_size_mb"] = 0
+        dest_params["fifo_compaction_max_table_files_size_mb"] = 0
         dest_params["fifo_compaction_use_kv_ratio_compaction"] = 0
     if dest_params["partition_filters"] == 1:
         if dest_params["index_type"] != 2:
@@ -1134,6 +1146,8 @@ def finalize_and_sanitize(src_params):
         # Interpolation search requires BytewiseComparator but user-defined
         # timestamps use BytewiseComparatorWithU64TsWrapper.
         dest_params["index_block_search_type"] = 0
+        # TrieIndexFactory requires BytewiseComparator.
+        dest_params["use_trie_index"] = 0
     if (
         dest_params.get("enable_compaction_filter", 0) == 1
         or dest_params.get("inplace_update_support", 0) == 1
@@ -1184,9 +1198,6 @@ def finalize_and_sanitize(src_params):
             # have to disable metadata write fault injection to other file
             dest_params["exclude_wal_from_write_fault_injection"] = 1
             dest_params["metadata_write_fault_one_in"] = 0
-
-            # TODO Fix - Remote worker shouldn't recover from WAL
-            dest_params["remote_compaction_worker_threads"] = 0
     # Disabling block align if mixed manager is being used
     if dest_params.get("compression_manager") == "custom":
         if dest_params.get("block_align") == 1:
@@ -1290,6 +1301,15 @@ def finalize_and_sanitize(src_params):
     # Therefore, when inplace_update_support is enabled, disable memtable_veirfy_per_key_checksum_on_seek
     if dest_params["inplace_update_support"] == 1:
         dest_params["memtable_veirfy_per_key_checksum_on_seek"] = 0
+
+    # allow_resumption requires remote compaction
+    if dest_params.get("remote_compaction_worker_threads", 0) == 0:
+        dest_params["allow_resumption_one_in"] = 0
+
+    # When read-triggered compaction is enabled, use a short periodic trigger
+    # interval so that the feature gets exercised on a quiet DB.
+    if dest_params.get("read_triggered_compaction_threshold", 0) > 0:
+        dest_params["max_compaction_trigger_wakeup_seconds"] = 20
 
     return dest_params
 
@@ -1406,7 +1426,13 @@ def execute_cmd(cmd, timeout=None, timeout_pstack=False):
             print("KILLED %d (SIGTERM did not work)\n" % child.pid)
             outs, errs = child.communicate()
 
-    return hit_timeout, child.returncode, outs.decode("utf-8"), errs.decode("utf-8"), pid
+    return (
+        hit_timeout,
+        child.returncode,
+        outs.decode("utf-8"),
+        errs.decode("utf-8"),
+        pid,
+    )
 
 
 def print_output_and_exit_on_error(stdout, stderr, print_stderr_separately=False):
