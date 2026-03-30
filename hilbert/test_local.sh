@@ -1,7 +1,7 @@
 #!/usr/bin/bash
 
 INCLUDES="-I.. -I../include"
-CFLAGS="-Werror -Wall -Wextra -Wpedantic -O1"
+CFLAGS="-std=c++17 -Werror -Wall -Wextra -Wpedantic -O1"
 
 # Compile
 g++ -c geometry.cc -o geometry.o $INCLUDES $CFLAGS
@@ -28,7 +28,7 @@ chmod +x hilbert_curve_test
 chmod +x rtree_test
 ./geometry_number_test
 ./geometry_rectangle_test
-# ./hilbert_curve_test
+./hilbert_curve_test
 ./rtree_test
 
 # Remove

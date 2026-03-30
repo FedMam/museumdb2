@@ -163,53 +163,43 @@ void TEST_Intersects1() {
 }
 
 void TEST_Intersects2() {
-  VarLenRectangle rectA(
-    VarLenNumber(1, 0x10u),
-    VarLenNumber(1, 0x10u),
-    VarLenNumber(1, 0x90u),
-    VarLenNumber(1, 0x90u)
-  ), rectB(
-    VarLenNumber(1, 0x10u),
-    VarLenNumber(1, 0x20u),
-    VarLenNumber(1, 0x80u),
-    VarLenNumber(1, 0x80u)
-  ), rectC(
-    VarLenNumber(1, 0x20u),
-    VarLenNumber(1, 0x20u),
-    VarLenNumber(1, 0x70u),
-    VarLenNumber(1, 0x70u)
-  ), rectD(
-    VarLenNumber(1, 0x30u),
-    VarLenNumber(1, 0x30u),
-    VarLenNumber(1, 0x70u),
-    VarLenNumber(1, 0x60u)
-  ), rectE(
-    VarLenNumber(1, 0x40u),
-    VarLenNumber(1, 0x40u),
-    VarLenNumber(1, 0x60u),
-    VarLenNumber(1, 0x60u)
-  ), rectF(
-    VarLenNumber(1, 0x48u),
-    VarLenNumber(1, 0x48u),
-    VarLenNumber(1, 0x58u),
-    VarLenNumber(1, 0x58u)
-  );
+  std::vector<VarLenRectangle> rectHierarchy = {
+      VarLenRectangle(
+      VarLenNumber(1, 0x10u),
+      VarLenNumber(1, 0x10u),
+      VarLenNumber(1, 0x90u),
+      VarLenNumber(1, 0x90u)
+    ), VarLenRectangle(
+      VarLenNumber(1, 0x10u),
+      VarLenNumber(1, 0x20u),
+      VarLenNumber(1, 0x80u),
+      VarLenNumber(1, 0x80u)
+    ), VarLenRectangle(
+      VarLenNumber(1, 0x20u),
+      VarLenNumber(1, 0x20u),
+      VarLenNumber(1, 0x70u),
+      VarLenNumber(1, 0x70u)
+    ), VarLenRectangle(
+      VarLenNumber(1, 0x30u),
+      VarLenNumber(1, 0x30u),
+      VarLenNumber(1, 0x70u),
+      VarLenNumber(1, 0x60u)
+    ), VarLenRectangle(
+      VarLenNumber(1, 0x40u),
+      VarLenNumber(1, 0x40u),
+      VarLenNumber(1, 0x60u),
+      VarLenNumber(1, 0x60u)
+    ), VarLenRectangle(
+      VarLenNumber(1, 0x48u),
+      VarLenNumber(1, 0x48u),
+      VarLenNumber(1, 0x58u),
+      VarLenNumber(1, 0x58u)
+    )
+  };
 
-  assert(rectA.Intersects(rectB) && rectB.Intersects(rectA));
-  assert(rectA.Intersects(rectC) && rectC.Intersects(rectA));
-  assert(rectA.Intersects(rectD) && rectD.Intersects(rectA));
-  assert(rectA.Intersects(rectE) && rectE.Intersects(rectA));
-  assert(rectA.Intersects(rectF) && rectF.Intersects(rectA));
-  assert(rectB.Intersects(rectC) && rectC.Intersects(rectB));
-  assert(rectB.Intersects(rectD) && rectD.Intersects(rectB));
-  assert(rectB.Intersects(rectE) && rectE.Intersects(rectB));
-  assert(rectB.Intersects(rectF) && rectF.Intersects(rectB));
-  assert(rectC.Intersects(rectD) && rectD.Intersects(rectC));
-  assert(rectC.Intersects(rectE) && rectE.Intersects(rectC));
-  assert(rectC.Intersects(rectF) && rectF.Intersects(rectC));
-  assert(rectD.Intersects(rectE) && rectE.Intersects(rectD));
-  assert(rectD.Intersects(rectF) && rectF.Intersects(rectD));
-  assert(rectE.Intersects(rectF) && rectF.Intersects(rectE));
+  for (auto& rect1: rectHierarchy)
+    for (auto& rect2: rectHierarchy)
+      assert(rect1.Intersects(rect2));
 }
 
 void TEST_Intersects3() {

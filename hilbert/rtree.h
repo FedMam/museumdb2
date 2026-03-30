@@ -22,7 +22,7 @@ template<typename TItem>
 struct RTreeEntry {
  public:
   RTreeEntry(const VarLenPoint2DWithHilbertValue& point,
-                     const TItem* object_ptr)
+             const TItem* object_ptr)
     : point_(point),
       object_ptr_(object_ptr) { }
   
@@ -114,27 +114,18 @@ class RTree {
     // Minimum bounding rectangle of all the node's children.
     inline const VarLenRectangle& GetMBR() const { return mbr_; }
 
-    // Sets lhv_ to max(lhv_, newLhv). Propagates changes upwards, but only if any. 
-    void AdjustLHVAndPropagate(const VarLenNumber& newLhv) {
-      if (newLhv > lhv_) {
-        lhv_ = newLhv;
-        if (parent_)
-          parent_->AdjustLHVAndPropagate(lhv_);
-      }
+    // Sets lhv_ to max(lhv_, newLhv). Does not propagate changes upwards.
+    inline void AdjustLHV(const VarLenNumber& newLhv) {
+      lhv_ = std::max(lhv_, newLhv);
     }
 
-    // Sets mbr_ to MBR(mbr_, newMbr). Propagates changes upwards, but only if any. 
-    void AdjustMBRAndPropagate(const VarLenRectangle& newMbr) {
-      VarLenRectangle commonMbr = mbr_.MBR(newMbr);
-      if (commonMbr != mbr_) {
-        mbr_ = commonMbr;
-        if (parent_)
-          parent_->AdjustMBRAndPropagate(mbr_);
-      }
+    // Sets mbr_ to MBR(mbr_, newMbr). Does not propagate changes upwards.
+    inline void AdjustMBR(const VarLenRectangle& newMbr) {
+      mbr_ = mbr_.MBR(newMbr);
     }
 
-    // Recalculates LHV and MBR and propagates changes upwards if propagate is true.
-    void RecalculateLHVAndMBR(bool propagate = false) {
+    // Recalculates LHV and MBR based on these values of children
+    void RecalculateLHVAndMBR() {
       if (IsEmpty()) return;
       if (IsLeaf()) {
         lhv_ = leaf_children_.front().GetHilbertValue();
@@ -159,82 +150,13 @@ class RTree {
           ++iter;
         }
       }
-      if (propagate)
-        if (parent_)
-          parent_->RecalculateLHVAndMBR(propagate);
     }
 
-    // Fails if the node's parent_ does not equal expected_parent or
-    // lhv_ and mbr_ are not equal to the actual LHV and MBR
-    // of all children. Checks not only this node but its whole subtree.
-    // Should be only used in tests.
-    void VerifyIntegrityInSubTree(const RTreeNode* expected_parent) {
-      assert(parent_ == expected_parent);
-      
-      VarLenNumber old_lhv = lhv_;
-      VarLenRectangle old_mbr = mbr_;
-      
-      RecalculateLHVAndMBR(false);
-
-      assert (lhv_ == old_lhv && mbr_ == old_mbr);
-
-      if (!IsLeaf()) {
-        for (auto iter = non_leaf_children_.begin(); iter != non_leaf_children_.end(); ++iter) {
-          (*iter)->VerifyIntegrityInSubTree(this);
-        }
-      }
-    }
-
-    // Inserts a new item into the node (replaces if the item with the same Hilbert value already exists).
-    // Warning: throws an error if this node is not a leaf node.
-    // Warning: recalculates MBR and LHV, but does not propagate changes upward. Do not forget to do it manually.
-    void InsertOrReplaceInLeaf(const RTreeEntry<TItem>& item) {
-      assert(IsLeaf());
-
-      mbr_ = mbr_.MBR(item.GetBoundingRectangle());
-      
-      for (auto iter = leaf_children_.begin(); iter != leaf_children_.end(); ++iter) {
-        int cmp = (*iter).GetHilbertValue().Compare(item.GetHilbertValue());
-        if (cmp == 0) {
-          (*iter) = item;
-          return;
-        } else if (cmp > 0) {
-          leaf_children_.insert(iter, item);
-          return;
-        }
-      }
-
-      leaf_children_.insert(leaf_children_.end(), item);
-      lhv_ = item.GetHilbertValue();
-    }
-
-    // Title.
-    // Used only after Split() to insert a newly-created left node
-    // at position of the right node in the splitted node's parent.
-    // Warning: throws an error if this node is not a non-leaf node or
-    // node_to_position was not found in this node.
-    // Warning: recalculates MBR and LHV, but does not propagate changes upward. Do not forget to do it manually.
-    void InsertInNonLeafAtPositionOfAnotherNode(RTreeNode* new_node, RTreeNode* node_to_position) {
-      assert(!IsLeaf());
-
-      for (auto iter = non_leaf_children_.begin(); iter != non_leaf_children_.end(); ++iter) {
-        if (*iter == node_to_position) {
-          non_leaf_children_.insert(iter, new_node);
-          new_node->parent_ = this;
-          lhv_ = std::max(lhv_, new_node->GetLHV());
-          mbr_ = mbr_.MBR(new_node->GetMBR());
-          return;
-        }
-      }
-
-      throw std::logic_error("node node_to_position was not found in this node");
-    }
-    
     // Splits this node into two: left and right.
     // This node becomes the right node, and pointer to the left node
     // is returned. Don't forget to deallocate or own that pointer to prevent
     // memory leak.
-    // Warning: recalculates MBR and LHV, but does not propagate changes upward. Do not forget to do it manually.
+    // Will automatically recalculate MBR and LHV, but will not propagate changes upward. Do not forget to do it manually.
     RTreeNode* Split() {
       if (IsLeaf()) {
         size_t left_size = leaf_children_.size() / 2;
@@ -243,7 +165,7 @@ class RTree {
         auto middle_iter = leaf_children_.begin();
         std::advance(middle_iter, left_size);
         left_leaf_children.splice(left_leaf_children.begin(), leaf_children_, leaf_children_.begin(), middle_iter);
-        RecalculateLHVAndMBR(false);
+        RecalculateLHVAndMBR();
 
         RTreeNode* left_node = new RTreeNode(left_leaf_children);
         left_node->parent_ = this->parent_;
@@ -255,7 +177,7 @@ class RTree {
         auto middle_iter = non_leaf_children_.begin();
         std::advance(middle_iter, left_size);
         left_non_leaf_children.splice(left_non_leaf_children.begin(), non_leaf_children_, non_leaf_children_.begin(), middle_iter);
-        RecalculateLHVAndMBR(false);
+        RecalculateLHVAndMBR();
 
         RTreeNode* left_node = new RTreeNode(left_non_leaf_children);
         left_node->parent_ = this->parent_;
@@ -263,7 +185,7 @@ class RTree {
       }
     }
 
-    friend class RTree<TItem>;
+    friend class RTree;
 
    private:
     RTreeNode* parent_;
@@ -293,7 +215,10 @@ class RTree {
         size_t non_leaf_capacity)
     : number_length_(number_length),
       leaf_capacity_(leaf_capacity),
-      non_leaf_capacity_(non_leaf_capacity) {
+      non_leaf_capacity_(non_leaf_capacity),
+      tree_size_(0),
+      root_(new RTreeNode()) {
+    assert(number_length >= 1);
     assert(leaf_capacity >= 2);
     assert(non_leaf_capacity >= 2);
   }
@@ -308,6 +233,8 @@ class RTree {
   inline size_t GetNumberLength() const { return number_length_; }
   inline size_t GetLeafCapacity() const { return leaf_capacity_; }
   inline size_t GetNonLeafCapacity() const { return non_leaf_capacity_; }
+
+  inline size_t GetSize() const { return tree_size_; }
 
   std::optional<RTreeEntry<TItem>> Find(const VarLenPoint2D& key_point) const {
     std::vector<RTreeEntry<TItem>> result;
@@ -332,66 +259,42 @@ class RTree {
   bool InsertOrReplace(const VarLenPoint2DWithHilbertValue& key_point, const TItem* item) {
     VerifyPointLength_(key_point);
 
-    RTreeNode* leaf_node = ChooseLeaf_(key_point);
+    RTreeEntry<TItem> entry(key_point, item);
 
-    return InsertIntoLeafNode_(leaf_node, RTreeEntry(key_point, item));
+    auto [was_replaced, maybe_new_node] = InsertOrReplaceRec_(root_, entry);
+    
+    if (maybe_new_node) {
+      std::list<RTreeNode*> new_root_children = { maybe_new_node, root_ };
+      RTreeNode* new_root = new RTreeNode(new_root_children);
+      root_ = new_root;
+    }
+
+    return was_replaced;
   }
 
-  // Should be only used in tests
+  // Throws an error if:
+  // - the tree size does not match the number of elements in it;
+  // - any node's parent is not equal to the node which has it as a child;
+  // - any node's number of children exceeds its capacity;
+  // - any of the Hilbert values in the leaf node have the wrong byte length;
+  // - any node's stored LHV and MBR values are not equal to the actual LHV and MBR of their children;
+  // - all the Hilbert values in the leaves are not stored in strict order.
+  //
+  // Should be only used in tests.
   void VerifyIntegrity() const {
-    root_->VerifyIntegrityInSubTree(nullptr);
+    size_t actual_size = 0;
+    VerifyIntegrityRec_(root_, VarLenNumber(0), &actual_size);
+    assert(actual_size == tree_size_);
   }
 
  private:
   // Throws an error if point's coordinates byte length does not match number_length (used in queries)
-  inline void VerifyPointLength_(const VarLenPoint2DWithHilbertValue& point) {
+  inline void VerifyPointLength_(const VarLenPoint2DWithHilbertValue& point) const {
     assert(point.GetNumberLength() == number_length_);
   }
 
-  // Returns true if item's key point already existed in this node and
-  // the item was replaces instead of inserted
-  // Warning: throws an error if node is not leaf
-  bool InsertIntoLeafNode_(RTreeNode* node, const RTreeEntry<TItem>& item) {
-    size_t old_node_size = node->GetSize();
-    
-    node->InsertOrReplaceInLeaf(item);
-
-    if (node->GetSize() == old_node_size) {
-      // the node size hasn't been increased, this means the item
-      // was replaced instead of inserted
-      return true;
-    }
-
-    if (node->GetSize() > leaf_capacity_) {
-      SplitNode_(node, item);
-    } else {
-      node->AdjustLHVAndPropagate(item.GetHilbertValue());
-      node->AdjustMBRAndPropagate(item.GetBoundingRectangle());
-    }
-    return false;
-  }
-
-  // Note: parameter added_item is needed so we can call AdjustLHV/MBRAndPropagate() instead of RecalculateLHVAndMBR()
-  // since we know that the only value which could increase the node's LHV and MBR is this item.
-  void SplitNode_(RTreeNode* node, const RTreeEntry<TItem>& added_item) {
-    if (node->parent_ == nullptr) {
-      // node is the root
-      assert(node == root_);
-
-      RTreeNode* left_root_child = root_->Split();
-      std::list<RTreeNode*> new_root_children = { left_root_child, root_ };
-      root_ = new RTreeNode(new_root_children);
-      return;
-    }
-
-    RTreeNode* left_node = node->Split();
-    node->parent_->InsertInNonLeafAtPositionOfAnotherNode(left_node, node);
-    if (node->parent_->GetSize() > non_leaf_capacity_) {
-      SplitNode_(node->parent_, added_item);
-    } else {
-      node->parent_->AdjustLHVAndPropagate(added_item.GetHilbertValue());
-      node->parent_->AdjustMBRAndPropagate(added_item.GetBoundingRectangle());
-    }
+  inline void VerifyHilbertValueLength_(const VarLenNumber& hilbertValue) const {
+    assert(hilbertValue.GetLength() == number_length_ * 2);
   }
 
   void SearchRec_(RTreeNode* curr_node, const VarLenRectangle& rect, std::vector<RTreeEntry<TItem>>& result) const {
@@ -412,33 +315,119 @@ class RTree {
     }
   }
 
-  // Choose the leaf node in which to place a new point.
-  RTreeNode* ChooseLeaf_(const VarLenPoint2DWithHilbertValue& point) {
-    RTreeNode *node = root_;
-    while (true) {
-      assert(node != nullptr);
-      
-      if (node->IsLeaf())
-        return node;
-      
-      bool next_node_found = false;
-      for (auto iter = node->non_leaf_children_.begin(); iter != node->non_leaf_children_.end(); ++iter) {
-        if (point.GetHilbertValue() >= (*iter)->GetLHV()) {
-          node = *iter;
-          next_node_found = true;
+  // First return result: true if the element at this position already existed and has
+  // been replaced, or false if it was inserted.
+  // Second return result: a pointer to a new node if curr_node has been split during the process,
+  // or nullptr if it hasn't.
+  std::pair<bool, RTreeNode*> InsertOrReplaceRec_(RTreeNode* curr_node, const RTreeEntry<TItem>& item) {
+    assert(curr_node != nullptr);
+
+    if (curr_node->IsLeaf()) {
+      for (auto iter = curr_node->leaf_children_.begin(); iter != curr_node->leaf_children_.end(); ++iter) {
+        int cmp = (*iter).GetHilbertValue().Compare(item.GetHilbertValue());
+        if (cmp == 0) {
+          // replace
+          (*iter) = item;
+          curr_node->RecalculateLHVAndMBR();
+          // don't increase tree_size_
+          return std::make_pair(true, nullptr);
+        } else if (cmp >= 0) {
+          curr_node->leaf_children_.insert(iter, item);
+          ++tree_size_;
+          if (curr_node->GetSize() > leaf_capacity_) {
+            RTreeNode* left_node = curr_node->Split();
+            return std::make_pair(false, left_node);
+          } else {
+            curr_node->RecalculateLHVAndMBR();
+            return std::make_pair(false, nullptr);
+          }
+        }
+      }
+
+      curr_node->leaf_children_.insert(curr_node->leaf_children_.end(), item);
+      ++tree_size_;
+      if (curr_node->GetSize() > leaf_capacity_) {
+        RTreeNode* left_node = curr_node->Split();
+        return std::make_pair(false, left_node);
+      } else {
+        curr_node->RecalculateLHVAndMBR();
+        return std::make_pair(false, nullptr);
+      }
+    } else {
+      auto pos_to_insert = curr_node->non_leaf_children_.begin();
+
+      for (auto iter = curr_node->non_leaf_children_.begin(); iter != curr_node->non_leaf_children_.end(); ++iter) {
+        pos_to_insert = iter;
+        int cmp = (*iter)->GetLHV().Compare(item.GetHilbertValue());
+        if (cmp >= 0) {
           break;
         }
       }
-      if (!next_node_found) {
-        node = node->non_leaf_children_.back();
+      // if we didn't found a child node to insert, then
+      // pos_to_insert will carry the position of the last child node
+      // (one before end())
+
+      auto [was_replaced, maybe_new_node] = InsertOrReplaceRec_(*pos_to_insert, item);
+      if (!maybe_new_node) {
+        curr_node->RecalculateLHVAndMBR();
+        return std::make_pair(was_replaced, nullptr);
+      } else {
+        curr_node->non_leaf_children_.insert(pos_to_insert, maybe_new_node);
+        maybe_new_node->parent_ = curr_node;
+
+        if (curr_node->GetSize() > non_leaf_capacity_) {
+          RTreeNode* left_node = curr_node->Split();
+          return std::make_pair(was_replaced, left_node);
+        } else {
+          curr_node->RecalculateLHVAndMBR();
+          return std::make_pair(was_replaced, nullptr);
+        }
       }
     }
+  }
+
+  // prev_lhv: largest Hilbert value found in previously visited nodes (value of 0 with length 0 is used as -INF)
+  // actual_size: pointer to a value in which we'll record the number of items in it
+  // Returns: largest Hilbert value found yet
+  VarLenNumber VerifyIntegrityRec_(RTreeNode* curr_node, const VarLenNumber& prev_lhv, size_t* actual_size) const {
+    assert(curr_node != nullptr);
+
+    VarLenNumber lhv = prev_lhv;
+
+    if (curr_node->IsLeaf())
+      assert(curr_node->GetSize() <= leaf_capacity_);
+    else
+      assert(curr_node->GetSize() <= non_leaf_capacity_);
+
+    // This checks that the node's stored LHV and MBR values are valid
+    VarLenNumber old_node_lhv = curr_node->GetLHV();
+    VarLenRectangle old_node_mbr = curr_node->GetMBR();
+    curr_node->RecalculateLHVAndMBR();
+    assert(old_node_lhv == curr_node->GetLHV() && old_node_mbr == curr_node->GetMBR());
+    
+    if (curr_node->IsLeaf()) {
+      (*actual_size) += curr_node->GetSize();
+
+      for (auto iter = curr_node->leaf_children_.begin(); iter != curr_node->leaf_children_.end(); ++iter) {
+        VerifyHilbertValueLength_((*iter).GetHilbertValue());
+        assert((lhv.GetLength() == 0) || ((*iter).GetHilbertValue() > lhv));
+        lhv = (*iter).GetHilbertValue();
+      }
+    } else {
+      for (auto iter = curr_node->non_leaf_children_.begin(); iter != curr_node->non_leaf_children_.end(); ++iter) {
+        assert((*iter)->parent_ == curr_node);
+        lhv = VerifyIntegrityRec_(*iter, lhv, actual_size);
+      }
+    }
+
+    return lhv;
   }
 
   size_t number_length_;
   size_t leaf_capacity_;
   size_t non_leaf_capacity_;
 
+  size_t tree_size_;
   RTreeNode* root_;
 };
 

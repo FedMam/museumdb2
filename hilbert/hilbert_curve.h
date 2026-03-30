@@ -35,6 +35,7 @@ struct VarLenPoint2DWithHilbertValue {
 
   inline const VarLenNumber& GetHilbertValue() const { return hilbert_value_; }
 
+  // Note: returns the byte length of the point's coordinates. The Hilbert value length is 2 times greater.
   inline size_t GetNumberLength() const { return point_.GetX().GetLength(); }
 
  private:

@@ -105,7 +105,7 @@ struct VarLenNumber {
   inline VarLenNumber operator+(const VarLenNumber &other) const {
     return Add(other);
   }
-  
+
   VarLenNumber And(const VarLenNumber& other) const;
   VarLenNumber Or(const VarLenNumber& other) const;
   VarLenNumber Xor(const VarLenNumber& other) const;
@@ -246,6 +246,10 @@ struct VarLenPoint2D {
 // This structure represents a rectangle with four values: left (min X),
 // right (max X), top (min Y), bottom (max Y) (ALL INCLUSIVE!)
 // represented as VarLenNumber's.
+// This structure has methods to determine if it contains a point or
+// intersects with another rectangle or calculate MBR of two rectangles.
+// Warning: IT'S UP TO THE CALLER TO ENSURE THAT left <= right and top <= bottom.
+// Otherwise, Contains(), Intersects() and MBR() will yield incorrect results.
 struct VarLenRectangle {
  public:
   // Will construct a (0, 0, 0, 0) rectangle
@@ -253,8 +257,6 @@ struct VarLenRectangle {
     : VarLenRectangle(VarLenNumber(), VarLenNumber(), VarLenNumber(), VarLenNumber()) { }
   
   // Note: will automatically adjust all numbers to the same length
-  // Note: IT'S UP TO THE CALLER TO ENSURE THAT left <= right and top <= bottom.
-  // Otherwise, Contains(), Intersects() and MBR() may yield incorrect results.
   VarLenRectangle(const VarLenNumber& left,
                   const VarLenNumber& top,
                   const VarLenNumber& right,
@@ -262,8 +264,6 @@ struct VarLenRectangle {
   
   // Will automatically adjust all numbers to number_length (be careful of
   // possible data loss if needed to crop numbers for that).
-  // Note: IT'S UP TO THE CALLER TO ENSURE THAT left <= right and top <= bottom.
-  // Otherwise, Contains(), Intersects() and MBR() may yield incorrect results.
   VarLenRectangle(size_t number_length,
                   const VarLenNumber& left,
                   const VarLenNumber& top,
@@ -273,10 +273,8 @@ struct VarLenRectangle {
                       top.CropOrResize(number_length),
                       right.CropOrResize(number_length),
                       bottom.CropOrResize(number_length)) { }
-  
+
   // Note: will automatically adjust both points' coordinates to the same length
-  // Note: IT'S UP TO THE CALLER TO ENSURE THAT coordinates of leftTop <= respective coordinates of rightBottom.
-  // Otherwise, Contains(), Intersects() and MBR() may yield incorrect results.
   VarLenRectangle(const VarLenPoint2D& leftTop, const VarLenPoint2D& rightBottom)
     : VarLenRectangle(leftTop.GetX(), leftTop.GetY(), rightBottom.GetX(), rightBottom.GetY()) { }
 
