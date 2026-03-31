@@ -20,9 +20,9 @@ std::vector<std::string> fruits = {"Apple", "Banana", "Orange", "Mango", "Pineap
 // Helper function to quickly test a range query result
 // in which items may be stored in arbitrary order.
 template<typename TItem>
-inline bool ItemInRangeResult(const std::vector<RTreeEntry<TItem>>& range_result, const TItem* item, const VarLenPoint2D& expected_point) {
+inline bool ItemInRangeResult(const std::vector<RTreeEntry<TItem>>& range_result, const TItem& item, const VarLenPoint2D& expected_point) {
   for (auto entry: range_result)
-    if (entry.GetObjectPtr() == item && entry.GetPointWithoutHilbertValue() == expected_point)
+    if (entry.GetItem() == item && entry.GetPointWithoutHilbertValue() == expected_point)
       return true;
   return false;
 }
@@ -43,33 +43,33 @@ void TEST_Smoke() {
   );
 
   tree.VerifyIntegrity();
-  assert(!tree.InsertOrReplace(VarLenPoint2DWithHilbertValue(point0), &fruits[0]));
+  assert(!tree.InsertOrReplace(VarLenPoint2DWithHilbertValue(point0), fruits[0]));
   tree.VerifyIntegrity();
-  assert(!tree.InsertOrReplace(VarLenPoint2DWithHilbertValue(point1), &fruits[1]));
+  assert(!tree.InsertOrReplace(VarLenPoint2DWithHilbertValue(point1), fruits[1]));
   tree.VerifyIntegrity();
-  assert(!tree.InsertOrReplace(VarLenPoint2DWithHilbertValue(point2), &fruits[2]));
+  assert(!tree.InsertOrReplace(VarLenPoint2DWithHilbertValue(point2), fruits[2]));
   tree.VerifyIntegrity();
-  assert(!tree.InsertOrReplace(VarLenPoint2DWithHilbertValue(point3), &fruits[3]));
+  assert(!tree.InsertOrReplace(VarLenPoint2DWithHilbertValue(point3), fruits[3]));
   tree.VerifyIntegrity();
-  assert(!tree.InsertOrReplace(VarLenPoint2DWithHilbertValue(point4), &fruits[0])); // note that 0, not 4
+  assert(!tree.InsertOrReplace(VarLenPoint2DWithHilbertValue(point4), fruits[0])); // note that 0, not 4
   tree.VerifyIntegrity();
   assert(tree.GetSize() == 5);
 
   auto find_result = tree.Find(point0).value();
   assert(find_result.GetPointWithoutHilbertValue() == point0);
-  assert(find_result.GetObjectPtr() == &fruits[0]);
+  assert(find_result.GetItem() == fruits[0]);
   find_result = tree.Find(point1).value();
   assert(find_result.GetPointWithoutHilbertValue() == point1);
-  assert(find_result.GetObjectPtr() == &fruits[1]);
+  assert(find_result.GetItem() == fruits[1]);
   find_result = tree.Find(point2).value();
   assert(find_result.GetPointWithoutHilbertValue() == point2);
-  assert(find_result.GetObjectPtr() == &fruits[2]);
+  assert(find_result.GetItem() == fruits[2]);
   find_result = tree.Find(point3).value();
   assert(find_result.GetPointWithoutHilbertValue() == point3);
-  assert(find_result.GetObjectPtr() == &fruits[3]);
+  assert(find_result.GetItem() == fruits[3]);
   find_result = tree.Find(point4).value();
   assert(find_result.GetPointWithoutHilbertValue() == point4);
-  assert(find_result.GetObjectPtr() == &fruits[0]);
+  assert(find_result.GetItem() == fruits[0]);
 
   VarLenPoint2D point5(
     VarLenNumber(1, 0x50u), VarLenNumber(1, 0x50u)
@@ -83,17 +83,17 @@ void TEST_Smoke() {
     VarLenNumber(1, 0x30u), VarLenNumber(1, 0x18u)
   ));
   assert(range_result.size() == 2);
-  assert(ItemInRangeResult(range_result, &fruits[0], point0));
-  assert(ItemInRangeResult(range_result, &fruits[1], point1));
+  assert(ItemInRangeResult(range_result, fruits[0], point0));
+  assert(ItemInRangeResult(range_result, fruits[1], point1));
 
   range_result = tree.RangeQuery(VarLenRectangle(
     VarLenNumber(1, 0x10u), VarLenNumber(1, 0x18u),
     VarLenNumber(1, 0x30u), VarLenNumber(1, 0x30u)
   ));
   assert(range_result.size() == 3);
-  assert(ItemInRangeResult(range_result, &fruits[2], point2));
-  assert(ItemInRangeResult(range_result, &fruits[3], point3));
-  assert(ItemInRangeResult(range_result, &fruits[0], point4));
+  assert(ItemInRangeResult(range_result, fruits[2], point2));
+  assert(ItemInRangeResult(range_result, fruits[3], point3));
+  assert(ItemInRangeResult(range_result, fruits[0], point4));
 
   range_result = tree.RangeQuery(VarLenRectangle(
     VarLenNumber(1, 0x0fu), VarLenNumber(1, 0x11u),
@@ -101,25 +101,25 @@ void TEST_Smoke() {
   ));
   assert(range_result.size() == 0);
 
-  assert(!tree.InsertOrReplace(VarLenPoint2DWithHilbertValue(point5), &fruits[5]));
+  assert(!tree.InsertOrReplace(VarLenPoint2DWithHilbertValue(point5), fruits[5]));
   tree.VerifyIntegrity();
   assert(tree.GetSize() == 6);
   find_result = tree.Find(point5).value();
-  assert(find_result.GetObjectPtr() == &fruits[5]);
+  assert(find_result.GetItem() == fruits[5]);
   assert(find_result.GetPointWithoutHilbertValue() == point5);
 
-  assert(tree.InsertOrReplace(VarLenPoint2DWithHilbertValue(point2), &fruits[7]));
+  assert(tree.InsertOrReplace(VarLenPoint2DWithHilbertValue(point2), fruits[7]));
   tree.VerifyIntegrity();
   assert(tree.GetSize() == 6);
   find_result = tree.Find(point2).value();
-  assert(find_result.GetObjectPtr() == &fruits[7]);
+  assert(find_result.GetItem() == fruits[7]);
   assert(find_result.GetPointWithoutHilbertValue() == point2);
 
-  assert(tree.InsertOrReplace(VarLenPoint2DWithHilbertValue(point2), &fruits[2]));
+  assert(tree.InsertOrReplace(VarLenPoint2DWithHilbertValue(point2), fruits[2]));
   tree.VerifyIntegrity();
   assert(tree.GetSize() == 6);
   find_result = tree.Find(point2).value();
-  assert(find_result.GetObjectPtr() == &fruits[2]);
+  assert(find_result.GetItem() == fruits[2]);
   assert(find_result.GetPointWithoutHilbertValue() == point2);
 }
 
@@ -156,8 +156,8 @@ VarLenRectangle RandomRectangle(std::mt19937& mt, int n_bytes) {
 }
 
 // Returns a vector of inserted items and their points
-std::vector<std::pair<VarLenPoint2D, const std::string*>> InsertNRandomItemsIntoTree(RTree<std::string>& tree, int n, int n_bytes, std::mt19937& mt) {
-  std::vector<std::pair<VarLenPoint2D, const std::string*>> inserted_items;
+std::vector<std::pair<VarLenPoint2D, std::string>> InsertNRandomItemsIntoTree(RTree<std::string>& tree, int n, int n_bytes, std::mt19937& mt) {
+  std::vector<std::pair<VarLenPoint2D, std::string>> inserted_items;
   
   for (int i = 0; i < n; ++i) {
     while (true) {
@@ -165,7 +165,7 @@ std::vector<std::pair<VarLenPoint2D, const std::string*>> InsertNRandomItemsInto
       if (tree.Find(point).has_value())
         continue;
 
-      const std::string* item = &fruits[mt() % fruits.size()];
+      std::string item = fruits[mt() % fruits.size()];
 
       assert(!tree.InsertOrReplace(VarLenPoint2DWithHilbertValue(point), item));
       tree.VerifyIntegrity();
@@ -185,7 +185,7 @@ void RandomTreeTest(RTree<std::string>& tree, std::mt19937& mt, int n_items, int
     auto find_result = tree.Find(inserted_items[i].first).value();
 
     assert(find_result.GetPointWithoutHilbertValue() == inserted_items[i].first);
-    assert(find_result.GetObjectPtr() == inserted_items[i].second);
+    assert(find_result.GetItem() == inserted_items[i].second);
   }
 
   for (int i = 0; i < n_rectangles; ++i) {
@@ -268,7 +268,7 @@ void TEST_LotsOfReplaces() {
 
   for (size_t i = 0; i < 100000; ++i) {
     // we use fruits.size() - 1 so that it does not divide points.size()
-    const std::string* item = &fruits[i % (fruits.size() - 1)];
+    std::string item = fruits[i % (fruits.size() - 1)];
     tree.InsertOrReplace(VarLenPoint2DWithHilbertValue(points[i % points.size()]), item);
 
     if (i >= points.size()) {
@@ -277,16 +277,17 @@ void TEST_LotsOfReplaces() {
       for (size_t j = i - points.size() + 1; j <= i; ++j) {
         auto find_result = tree.Find(points[j % points.size()]).value();
         assert(find_result.GetPointWithoutHilbertValue() == points[j % points.size()]);
-        assert(find_result.GetObjectPtr() == &fruits[j % (fruits.size() - 1)]);
+        assert(find_result.GetItem() == fruits[j % (fruits.size() - 1)]);
 
-        assert(ItemInRangeResult(range_result, &fruits[j % (fruits.size() - 1)], points[j % points.size()]));
+        assert(ItemInRangeResult(range_result, fruits[j % (fruits.size() - 1)], points[j % points.size()]));
       }
     }
   }
 }
 
 void TEST_TimeComplexity() {
-  RTree<std::string> tree(4, 4, 4);
+  // this test will use pointers instead of strings
+  RTree<const std::string*> tree(4, 4, 4);
   std::mt19937 mt(49);
 
   std::vector<VarLenNumber> codes;
@@ -309,7 +310,7 @@ void TEST_TimeComplexity() {
     auto find_result = tree.Find(points[index]).value();
     assert(find_result.GetHilbertValue() == codes[index]);
     assert(find_result.GetPointWithoutHilbertValue() == points[index]);
-    assert(find_result.GetObjectPtr() == &fruits[index % fruits.size()]);
+    assert(find_result.GetItem() == &fruits[index % fruits.size()]);
 
     uint32_t x = points[index].GetX().NumericalValue32(), y = points[index].GetY().NumericalValue32();
     VarLenRectangle rect(
@@ -320,13 +321,13 @@ void TEST_TimeComplexity() {
     );
 
     auto range_result = tree.RangeQuery(rect);
-    assert(ItemInRangeResult(range_result, &fruits[index % fruits.size()], points[index]));
+    assert(ItemInRangeResult(range_result, (const std::string*)&fruits[index % fruits.size()], points[index]));
   }
 }
 
 void TEST_LotsOfMisses() {
   std::set<VarLenNumber> codes;
-  RTree<uint32_t> tree(4, 4, 4);
+  RTree<uint32_t*> tree(4, 4, 4);
   std::mt19937 mt(50);
 
   uint32_t fake_item = 0x5555;
@@ -344,7 +345,7 @@ void TEST_LotsOfMisses() {
     auto find_result_optional = tree.Find(point);
     assert(!find_result_optional.has_value() || (
       codes.find(find_result_optional.value().GetHilbertValue()) != codes.end() &&
-      find_result_optional.value().GetObjectPtr() == &fake_item
+      find_result_optional.value().GetItem() == &fake_item
     ));
   }
 }

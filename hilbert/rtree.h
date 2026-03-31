@@ -16,20 +16,24 @@
 
 namespace ROCKSDB_NAMESPACE {
 
+// needed to declare it as a friend to RTree
+template<typename TItem>
+struct RTreeBuilder;
+
 // This structure will also be used as output of the queries,
 // this is why its methods are publicly exposed
 template<typename TItem>
 struct RTreeEntry {
  public:
   RTreeEntry(const VarLenPoint2DWithHilbertValue& point,
-             const TItem* object_ptr)
+             const TItem& item)
     : point_(point),
-      object_ptr_(object_ptr) { }
+      item_(item) { }
   
   inline const VarLenPoint2DWithHilbertValue& GetPointWithHilbertValue() const { return point_; }
   inline const VarLenPoint2D& GetPointWithoutHilbertValue() const { return point_.GetPoint(); }
   inline const VarLenNumber& GetHilbertValue() const { return point_.GetHilbertValue(); }
-  inline const TItem* GetObjectPtr() const { return object_ptr_; }
+  inline const TItem& GetItem() const { return item_; }
 
   // Returns a degenerate rectangle of one point
   inline const VarLenRectangle GetBoundingRectangle() const {
@@ -39,7 +43,7 @@ struct RTreeEntry {
  private:
   VarLenPoint2DWithHilbertValue point_;
   VarLenNumber hilbert_value_;
-  const TItem* object_ptr_;
+  TItem item_;
 };
 
 // This is a Hilbert R-Tree implementation. This structure is
@@ -213,15 +217,7 @@ class RTree {
   RTree(size_t number_length,
         size_t leaf_capacity,
         size_t non_leaf_capacity)
-    : number_length_(number_length),
-      leaf_capacity_(leaf_capacity),
-      non_leaf_capacity_(non_leaf_capacity),
-      tree_size_(0),
-      root_(new RTreeNode()) {
-    assert(number_length >= 1);
-    assert(leaf_capacity >= 2);
-    assert(non_leaf_capacity >= 2);
-  }
+    : RTree(number_length, leaf_capacity, non_leaf_capacity, 0, new RTreeNode()) { }
 
   ~RTree() {
     delete root_;
@@ -256,7 +252,7 @@ class RTree {
   }
 
   // Returns true if the item at key_point already existed and had been replaced.
-  bool InsertOrReplace(const VarLenPoint2DWithHilbertValue& key_point, const TItem* item) {
+  bool InsertOrReplace(const VarLenPoint2DWithHilbertValue& key_point, const TItem& item) {
     VerifyPointLength_(key_point);
 
     RTreeEntry<TItem> entry(key_point, item);
@@ -287,7 +283,24 @@ class RTree {
     assert(actual_size == tree_size_);
   }
 
+  friend class RTreeBuilder<TItem>;
+
  private:
+  RTree(size_t number_length,
+        size_t leaf_capacity,
+        size_t non_leaf_capacity,
+        size_t tree_size,
+        RTreeNode* root)
+    : number_length_(number_length),
+      leaf_capacity_(leaf_capacity),
+      non_leaf_capacity_(non_leaf_capacity),
+      tree_size_(tree_size),
+      root_(root) {
+    assert(number_length >= 1);
+    assert(leaf_capacity >= 2);
+    assert(non_leaf_capacity >= 2);
+  }
+
   // Throws an error if point's coordinates byte length does not match number_length (used in queries)
   inline void VerifyPointLength_(const VarLenPoint2DWithHilbertValue& point) const {
     assert(point.GetNumberLength() == number_length_);
