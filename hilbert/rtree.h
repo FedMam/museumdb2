@@ -190,6 +190,7 @@ class RTree {
     }
 
     friend class RTree;
+    friend class RTreeDumper;
 
    private:
     RTreeNode* parent_;
@@ -284,6 +285,7 @@ class RTree {
   }
 
   friend class RTreeBuilder<TItem>;
+  friend class RTreeDumper;
 
  private:
   RTree(size_t number_length,
