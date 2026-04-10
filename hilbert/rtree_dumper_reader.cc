@@ -75,43 +75,72 @@ Status RTreeDumper::DumpRec_(const RTreeNode* node, uint32_t number_length, Writ
     s = file.Append(Slice(reinterpret_cast<const char*>(child_positions.data()), sizeof(uint32_t) * child_positions.size()));
     if (!s.ok()) return s;
   }
+
+  return Status::OK();
 }
 
-Status RTreeReader::NewRTreeReader(RandomAccessFile& file, RTreeReader* out) {
-  RTreeReader rtree_reader(file);
-  Status s = Status::OK();
+RTreeReader::RTreeReader(RandomAccessFile* file, Status* s) {
+  file_ = file;
 
   uint64_t file_size_64;
-  s = file.GetFileSize(&file_size_64);
+  *s = file_->GetFileSize(&file_size_64);
   uint32_t file_size = static_cast<uint32_t>(file_size_64);
 
   if (file_size_64 >= UINT32_MAX)
-    s = s.UpdateIfOk(Status::InvalidArgument("Invalid R-Tree file format: size too large"));
+    *s = s->UpdateIfOk(Status::InvalidArgument("Invalid R-Tree file format: size too large"));
   if (file_size < sizeof(RTreeFileFooter))
-    s = s.UpdateIfOk(Status::InvalidArgument("Invalid R-Tree file format: size too small"));
+    *s = s->UpdateIfOk(Status::InvalidArgument("Invalid R-Tree file format: size too small"));
   
-  if (!s.ok()) return s;
+  if (!s->ok()) {
+    file_ = nullptr;
+    return;
+  }
 
-  rtree_reader.data_area_size_ = file_size - sizeof(RTreeFileFooter);
+  data_area_size_ = file_size - sizeof(RTreeFileFooter);
 
   char scratch[sizeof(RTreeFileFooter)];
   Slice footer_slice;
 
-  s = file.Read(rtree_reader.data_area_size_,
-                sizeof(RTreeFileFooter),
-                &footer_slice,
-                scratch);
-  if (!s.ok()) return s;
-  memcpy(&rtree_reader.footer_, footer_slice.data(), sizeof(RTreeFileFooter));
+  *s = file_->Read(data_area_size_,
+                   sizeof(RTreeFileFooter),
+                   &footer_slice,
+                   scratch);
+  if (!s->ok()) {
+    file_ = nullptr;
+    return;
+  }
+  memcpy(&footer_, footer_slice.data(), sizeof(RTreeFileFooter));
 
-  if (rtree_reader.footer_.magic_number != MUSEUMDB2_RTREE_MAGIC_NUMBER)
-    return Status::InvalidArgument("Invalid R-Tree file format: incorrect magic number");
-  if (rtree_reader.footer_.number_length == 0)
-    return Status::InvalidArgument("Invalid R-Tree file format: number length should be at least 1");
-  if (rtree_reader.footer_.root_position >= rtree_reader.data_area_size_)
-    return Status::InvalidArgument("Invalid R-Tree file format: invalid root node position");
+  if (footer_.magic_number != MUSEUMDB2_RTREE_MAGIC_NUMBER)
+    *s = s->UpdateIfOk(Status::InvalidArgument("Invalid R-Tree file format: incorrect magic number"));
+  if (footer_.number_length == 0)
+    *s = s->UpdateIfOk(Status::InvalidArgument("Invalid R-Tree file format: number length should be at least 1"));
+  if (footer_.root_position >= data_area_size_)
+    *s = s->UpdateIfOk(Status::InvalidArgument("Invalid R-Tree file format: invalid root node position"));
+  
+  if (!s->ok()) {
+    file_ = nullptr;
+  }
+}
 
-  return Status::OK();
+std::optional<RTreeEntry<uint32_t>> RTreeReader::Find(const VarLenPoint2D& key_point, Status* s) {
+  std::vector<RTreeEntry<uint32_t>> result;
+
+  *s = SearchRec_(footer_.root_position, VarLenRectangle(key_point, key_point), result);
+
+  if (!s->ok() || result.empty())
+    return std::optional<RTreeEntry<uint32_t>>();
+  return result[0];
+}
+
+std::vector<RTreeEntry<uint32_t>> RTreeReader::RangeQuery(const VarLenRectangle& rect, Status* s) {
+  std::vector<RTreeEntry<uint32_t>> result;
+
+  *s = SearchRec_(footer_.root_position, rect, result);
+
+  if (!s->ok())
+    return std::vector<RTreeEntry<uint32_t>>();
+  return result;
 }
 
 Status RTreeReader::SearchRec_(uint32_t node_pos, const VarLenRectangle& rect, std::vector<RTreeEntry<uint32_t>>& result) {
@@ -123,12 +152,12 @@ Status RTreeReader::SearchRec_(uint32_t node_pos, const VarLenRectangle& rect, s
 
   uint32_t node_footer_size = sizeof(char) + 4 * nl + sizeof(uint32_t);
   Slice node_footer;
-  char footer_scratch[node_footer_size];
+  std::vector<char> footer_scratch(node_footer_size);
 
-  s = file_.Read(node_pos,
-                 node_footer_size,
-                 &node_footer,
-                 footer_scratch);
+  s = file_->Read(node_pos,
+                  node_footer_size,
+                  &node_footer,
+                  footer_scratch.data());
   if (!s.ok()) return s;
 
   char is_leaf = *node_footer.data();
@@ -150,12 +179,12 @@ Status RTreeReader::SearchRec_(uint32_t node_pos, const VarLenRectangle& rect, s
   if (is_leaf) {
     uint32_t node_children_data_size = (2 * nl + sizeof(uint32_t)) * num_children;
     Slice node_children_data;
-    char node_scratch[node_children_data_size];
+    std::vector<char> node_scratch(node_children_data_size);
 
-    s = file_.Read(node_pos + node_footer_size,
-                   node_children_data_size,
-                   &node_children_data,
-                   node_scratch);
+    s = file_->Read(node_pos + node_footer_size,
+                    node_children_data_size,
+                    &node_children_data,
+                    node_scratch.data());
 
     const char* child_data = node_children_data.data();
     for (uint32_t i = 0; i < num_children; ++i) {
@@ -173,12 +202,12 @@ Status RTreeReader::SearchRec_(uint32_t node_pos, const VarLenRectangle& rect, s
   } else {
     uint32_t node_children_data_size = sizeof(uint32_t) * num_children;
     Slice node_children_data;
-    char node_scratch[node_children_data_size];
+    std::vector<char> node_scratch(node_children_data_size);
 
-    s = file_.Read(node_pos + node_footer_size,
-                   node_children_data_size,
-                   &node_children_data,
-                   node_scratch);
+    s = file_->Read(node_pos + node_footer_size,
+                    node_children_data_size,
+                    &node_children_data,
+                    node_scratch.data());
 
     const char* child_data = node_children_data.data();
     for (uint32_t i = 0; i < num_children; ++i) {

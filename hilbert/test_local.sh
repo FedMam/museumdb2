@@ -22,7 +22,7 @@ g++ geometry.o geometry_rectangle_test.o -o geometry_rectangle_test
 g++ geometry.o hilbert_curve.o hilbert_curve_test.o -o hilbert_curve_test
 g++ geometry.o hilbert_curve.o rtree_test.o -o rtree_test
 g++ geometry.o hilbert_curve.o rtree_builder_test.o -o rtree_builder_test
-g++ geometry.o hilbert_curve.o rtree_dumper_reader.o rtree_dumper_reader_test.o -o rtree_dumper_reader_test
+g++ geometry.o hilbert_curve.o rtree_dumper_reader.o ../util/status.o ../env/env.o rtree_dumper_reader_test.o -o rtree_dumper_reader_test
 
 echo "=== Linked ==="
 

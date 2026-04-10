@@ -64,24 +64,29 @@ struct RTreeFileFooter {
 // WARNING: This structure does not close the file. Be sure to close it manually.
 struct RTreeReader {
  public:
-  static Status NewRTreeReader(RandomAccessFile& file, RTreeReader* out);
+  // In case of an error, this constructor sets s to the error status
+  // and leaves the created instance in an invalid state in which it should not be used.
+  // Otherwise sets s to OK and the created instance is ready for use.
+  RTreeReader(RandomAccessFile* file, Status* s);
+
+  RTreeReader(const RTreeReader& other) = delete;
+  RTreeReader(RTreeReader&& other) = delete;
+
+  // Returns true if this instance has a valid RandomAccessFile reference and thus is usable.
+  // Do not use this instance if this returned false
+  inline bool IsValid() {
+    return file_ != nullptr;
+  }
 
   std::optional<RTreeEntry<uint32_t>> Find(const VarLenPoint2D& key_point, Status* s);
 
   std::vector<RTreeEntry<uint32_t>> RangeQuery(const VarLenRectangle& rect, Status* s);
 
-  // Closes the file.
-  // WARNING: do not call any other methods of this reader after calling Close()
-  Status Close();
-
  private:
-  RTreeReader(RandomAccessFile& file)
-    : file_(file) { }
-
   // After this function, the file position will be where it was
   Status SearchRec_(uint32_t node_pos, const VarLenRectangle& rect, std::vector<RTreeEntry<uint32_t>>& result);
 
-  RandomAccessFile& file_;
+  RandomAccessFile* file_;
   uint32_t data_area_size_;
   RTreeFileFooter footer_;
 };

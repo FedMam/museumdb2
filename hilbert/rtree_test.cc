@@ -1,6 +1,7 @@
 // TODO(FedMam): rewrite into Google Test
 
 #include "hilbert/rtree.h"
+#include "hilbert/geometry_test_util.h"
 
 #include "rocksdb/rocksdb_namespace.h"
 
@@ -8,24 +9,12 @@
 #include <stdint.h>
 
 #include <iostream>
-#include <vector>
-#include <random>
 #include <set>
 
 namespace ROCKSDB_NAMESPACE {
 namespace {
 
 std::vector<std::string> fruits = {"Apple", "Banana", "Orange", "Mango", "Pineapple", "Strawberry", "Watermelon", "Cherry", "Grape", "Kiwi", "Peach", "Pear", "Plum", "Apricot", "Cantaloupe", "Pomegranate", "Dragon Fruit", "Persimmon", "Coconut", "Guava"};
-
-// Helper function to quickly test a range query result
-// in which items may be stored in arbitrary order.
-template<typename TItem>
-inline bool ItemInRangeResult(const std::vector<RTreeEntry<TItem>>& range_result, const TItem& item, const VarLenPoint2D& expected_point) {
-  for (auto entry: range_result)
-    if (entry.GetItem() == item && entry.GetPointWithoutHilbertValue() == expected_point)
-      return true;
-  return false;
-}
 
 void TEST_Smoke() {
   RTree<std::string> tree(1, 2, 2);
@@ -121,38 +110,6 @@ void TEST_Smoke() {
   find_result = tree.Find(point2).value();
   assert(find_result.GetItem() == fruits[2]);
   assert(find_result.GetPointWithoutHilbertValue() == point2);
-}
-
-VarLenNumber RandomNumber(std::mt19937& mt, int n_bytes) {
-  std::string repr;
-  int left_bytes = n_bytes;
-  while (left_bytes > 0) {
-    uint32_t rand_num = mt();
-    for (unsigned i = 0; i < sizeof(uint32_t); ++i) {
-      if (left_bytes > 0) {
-        repr += static_cast<char>((rand_num >> (8 * i)) & 0xff);
-        --left_bytes;
-      } else break;
-    }
-  }
-  return VarLenNumber(n_bytes, repr);
-}
-
-VarLenRectangle RandomRectangle(std::mt19937& mt, int n_bytes) {
-  VarLenNumber left = RandomNumber(mt, n_bytes),
-    top = RandomNumber(mt, n_bytes),
-    right = RandomNumber(mt, n_bytes),
-    bottom = RandomNumber(mt, n_bytes);
-  
-  VarLenNumber temp = left;
-  left = std::min(left, right);
-  right = std::max(temp, right);
-
-  temp = top;
-  top = std::min(top, bottom);
-  bottom = std::max(temp, bottom);
-
-  return VarLenRectangle(left, top, right, bottom);
 }
 
 // Returns a vector of inserted items and their points

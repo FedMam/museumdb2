@@ -1,6 +1,7 @@
 // TODO(FedMam): rewrite into Google Test
 
 #include "hilbert/rtree_builder.h"
+#include "hilbert/geometry_test_util.h"
 
 #include "rocksdb/rocksdb_namespace.h"
 
@@ -8,29 +9,12 @@
 #include <stdint.h>
 
 #include <iostream>
-#include <vector>
-#include <random>
 #include <set>
 
 namespace ROCKSDB_NAMESPACE {
 namespace {
 
 std::vector<std::string> fruits = {"Apple", "Banana", "Orange", "Mango", "Pineapple", "Strawberry", "Watermelon", "Cherry", "Grape", "Kiwi", "Peach", "Pear", "Plum", "Apricot", "Cantaloupe", "Pomegranate", "Dragon Fruit", "Persimmon", "Coconut", "Guava"};
-
-VarLenNumber RandomNumber(std::mt19937& mt, int n_bytes) {
-  std::string repr;
-  int left_bytes = n_bytes;
-  while (left_bytes > 0) {
-    uint32_t rand_num = mt();
-    for (unsigned i = 0; i < sizeof(uint32_t); ++i) {
-      if (left_bytes > 0) {
-        repr += static_cast<char>((rand_num >> (8 * i)) & 0xff);
-        --left_bytes;
-      } else break;
-    }
-  }
-  return VarLenNumber(n_bytes, repr);
-}
 
 void TEST_NoSortNoStrictOrder() {
   std::vector<std::pair<VarLenNumber, std::string>> items;

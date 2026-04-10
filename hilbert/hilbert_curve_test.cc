@@ -1,6 +1,7 @@
 // TODO(FedMam): rewrite into Google Test
 
 #include "hilbert/hilbert_curve.h"
+#include "hilbert/geometry_test_util.h"
 
 #include "rocksdb/rocksdb_namespace.h"
 
@@ -8,8 +9,6 @@
 #include <stdint.h>
 
 #include <iostream>
-#include <vector>
-#include <random>
 
 namespace ROCKSDB_NAMESPACE {
 namespace {
@@ -53,20 +52,6 @@ void TEST_2BytesPartial() {
   }
 }
 
-VarLenNumber RandomNumber(std::mt19937& mt, int n_bytes) {
-  std::string repr;
-  int left_bytes = n_bytes;
-  while (left_bytes > 0) {
-    uint32_t rand_num = mt();
-    for (unsigned i = 0; i < sizeof(uint32_t); ++i) {
-      if (left_bytes > 0) {
-        repr += static_cast<char>((rand_num >> (8 * i)) & 0xff);
-        --left_bytes;
-      } else break;
-    }
-  }
-  return VarLenNumber(n_bytes, repr);
-}
 
 void TestNbytesRandomHelper(int max_samples, int n_bytes, int seed = 42) {
   std::mt19937 mt(seed);
