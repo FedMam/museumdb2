@@ -707,6 +707,7 @@ set(SOURCES
         db/blob/blob_file_addition.cc
         db/blob/blob_file_builder.cc
         db/blob/blob_file_cache.cc
+        db/blob/blob_file_partition_manager.cc
         db/blob/blob_file_garbage.cc
         db/blob/blob_file_meta.cc
         db/blob/blob_file_reader.cc
@@ -715,6 +716,7 @@ set(SOURCES
         db/blob/blob_log_sequential_reader.cc
         db/blob/blob_log_writer.cc
         db/blob/blob_source.cc
+        db/blob/blob_write_batch_transformer.cc
         db/blob/prefetch_buffer_collection.cc
         db/builder.cc
         db/c.cc
@@ -786,6 +788,7 @@ set(SOURCES
         db/version_util.cc
         db/wal_edit.cc
         db/wal_manager.cc
+        db/wide/read_path_blob_resolver.cc
         db/wide/wide_column_serialization.cc
         db/wide/wide_columns.cc
         db/wide/wide_columns_helper.cc
@@ -967,6 +970,7 @@ set(SOURCES
         utilities/cassandra/merge_operator.cc
         utilities/checkpoint/checkpoint_impl.cc
         utilities/compaction_filters.cc
+        utilities/sorted_run_builder/sorted_run_builder.cc
         utilities/compaction_filters/remove_emptyvalue_compactionfilter.cc
         utilities/counted_fs.cc
         utilities/debug.cc
@@ -1386,6 +1390,7 @@ if(WITH_TESTS)
         db/blob/blob_garbage_meter_test.cc
         db/blob/blob_source_test.cc
         db/blob/db_blob_basic_test.cc
+        db/blob/db_blob_direct_write_test.cc
         db/blob/db_blob_compaction_test.cc
         db/blob/db_blob_corruption_test.cc
         db/blob/db_blob_index_test.cc
@@ -1423,6 +1428,7 @@ if(WITH_TESTS)
         db/db_memtable_test.cc
         db/db_merge_operator_test.cc
         db/db_merge_operand_test.cc
+        db/db_open_with_config_test.cc
         db/db_options_test.cc
         db/db_properties_test.cc
         db/db_range_del_test.cc
@@ -1475,6 +1481,7 @@ if(WITH_TESTS)
         db/wal_manager_test.cc
         db/wal_edit_test.cc
         db/wide/db_wide_basic_test.cc
+        db/wide/db_wide_blob_direct_write_test.cc
         db/wide/wide_column_serialization_test.cc
         db/wide/wide_columns_helper_test.cc
         db/write_batch_test.cc
@@ -1555,6 +1562,7 @@ if(WITH_TESTS)
         utilities/cassandra/cassandra_row_merge_test.cc
         utilities/cassandra/cassandra_serialize_test.cc
         utilities/checkpoint/checkpoint_test.cc
+        utilities/sorted_run_builder/sorted_run_builder_test.cc
         utilities/env_timed_test.cc
         utilities/fault_injection_fs_test.cc
         utilities/memory/memory_test.cc

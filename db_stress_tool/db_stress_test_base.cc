@@ -29,6 +29,7 @@
 #include "options/options_parser.h"
 #include "rocksdb/convenience.h"
 #include "rocksdb/filter_policy.h"
+#include "rocksdb/io_dispatcher.h"
 #include "rocksdb/secondary_cache.h"
 #include "rocksdb/sst_file_manager.h"
 #include "rocksdb/table_properties.h"
@@ -1002,10 +1003,9 @@ void StressTest::OperateDb(ThreadState* thread) {
   read_opts.allow_unprepared_value = FLAGS_allow_unprepared_value;
   read_opts.auto_refresh_iterator_with_snapshot =
       FLAGS_auto_refresh_iterator_with_snapshot;
-  if (FLAGS_use_trie_index && udi_factory_) {
+  if (FLAGS_use_trie_index && !FLAGS_use_udi_as_primary_index && udi_factory_) {
     read_opts.table_index_factory = udi_factory_.get();
   }
-
   WriteOptions write_opts;
   if (FLAGS_rate_limit_auto_wal_flush) {
     write_opts.rate_limiter_priority = Env::IO_USER;
@@ -1715,6 +1715,14 @@ Status StressTest::TestMultiScan(ThreadState* thread,
       FLAGS_multiscan_use_async_io &&
       CheckFSFeatureSupport(options_.env->GetFileSystem().get(),
                             FSSupportedOps::kAsyncIO);
+  std::shared_ptr<IODispatcher> io_dispatcher;
+  if (FLAGS_multiscan_max_prefetch_memory_bytes > 0) {
+    IODispatcherOptions io_opts;
+    io_opts.max_prefetch_memory_bytes =
+        FLAGS_multiscan_max_prefetch_memory_bytes;
+    io_dispatcher.reset(NewIODispatcher(io_opts));
+    scan_opts.io_dispatcher = io_dispatcher;
+  }
   start_key_strs.reserve(num_scans);
   end_key_strs.reserve(num_scans);
 
@@ -1810,7 +1818,7 @@ Status StressTest::TestMultiScan(ThreadState* thread,
     }
 
     VerifyIterator(thread, cmp_cfh, ro, iter.get(), cmp_iter.get(), last_op,
-                   key, op_logs, verify_func, &diverged);
+                   key, rand_column_families, op_logs, verify_func, &diverged);
 
     while (iter->Valid()) {
       iter->Next();
@@ -1837,7 +1845,8 @@ Status StressTest::TestMultiScan(ThreadState* thread,
       }
 
       VerifyIterator(thread, cmp_cfh, ro, iter.get(), cmp_iter.get(), last_op,
-                     key, op_logs, verify_func, &diverged);
+                     key, rand_column_families, op_logs, verify_func,
+                     &diverged);
 
       if (diverged) {
         if (thread->shared->HasVerificationFailedYet()) {
@@ -1999,19 +2008,11 @@ Status StressTest::TestIterateImpl(ThreadState* thread,
 
     Slice key(key_str);
 
-    // UserDefinedIndexIterator supports Seek(target), Next(), and
-    // SeekToFirst(). However, SeekToLast, SeekForPrev, and Prev are not
-    // supported. Check if UDI is being used either via ReadOptions or
-    // CF-level configuration.
-    const bool using_udi =
-        (ro.table_index_factory != nullptr) || (udi_factory_ != nullptr);
-    // SeekToFirst is supported by UDI, so only total_order is required.
     const bool support_seek_to_first =
-        expect_total_order && (FLAGS_test_backward_scan || using_udi);
-    // SeekToLast requires backward scan support which UDI does not provide.
+        expect_total_order && FLAGS_test_backward_scan;
     const bool support_seek_to_last =
-        expect_total_order && FLAGS_test_backward_scan && !using_udi;
-    const bool support_seek_for_prev = FLAGS_test_backward_scan && !using_udi;
+        expect_total_order && FLAGS_test_backward_scan;
+    const bool support_seek_for_prev = FLAGS_test_backward_scan;
 
     // Write-prepared and Write-unprepared and multi-cf-iterator do not support
     // Refresh() yet.
@@ -2065,7 +2066,7 @@ Status StressTest::TestIterateImpl(ThreadState* thread,
     }
 
     VerifyIterator(thread, cmp_cfh, ro, iter.get(), cmp_iter.get(), last_op,
-                   key, op_logs, verify_func, &diverged);
+                   key, rand_column_families, op_logs, verify_func, &diverged);
 
     const bool no_reverse =
         (FLAGS_memtablerep == "prefix_hash" && !expect_total_order) ||
@@ -2106,7 +2107,8 @@ Status StressTest::TestIterateImpl(ThreadState* thread,
       }
 
       VerifyIterator(thread, cmp_cfh, ro, iter.get(), cmp_iter.get(), last_op,
-                     key, op_logs, verify_func, &diverged);
+                     key, rand_column_families, op_logs, verify_func,
+                     &diverged);
     }
 
     thread->stats.AddIterations(1);
@@ -2152,6 +2154,99 @@ Status StressTest::TestGetCurrentWalFile() const {
   return db_->GetCurrentWalFile(&cur_wal_file);
 }
 
+void StressTest::DumpIteratorDivergenceDiagnostics(
+    ColumnFamilyHandle* cmp_cfh, const ReadOptions& ro, const Slice& seek_key,
+    const std::vector<int>& rand_column_families) const {
+  fprintf(stderr,
+          "Iterator divergence diagnostics: seek_key=%s, cmp_cf=%s, "
+          "prefix_extractor=%d, using_udi=%d, use_multi_cf_iterator=%d, "
+          "selected_cf_count=%zu\n",
+          seek_key.ToString(/*hex=*/true).c_str(), cmp_cfh->GetName().c_str(),
+          static_cast<int>(options_.prefix_extractor != nullptr),
+          static_cast<int>(ro.table_index_factory != nullptr),
+          static_cast<int>(FLAGS_use_multi_cf_iterator),
+          rand_column_families.size());
+
+  auto make_debug_iter =
+      [&](const ReadOptions& debug_ro,
+          bool use_multi_cf_iter) -> std::unique_ptr<Iterator> {
+    if (use_multi_cf_iter) {
+      std::vector<ColumnFamilyHandle*> cfhs;
+      cfhs.reserve(rand_column_families.size());
+      for (int cf_index : rand_column_families) {
+        cfhs.emplace_back(column_families_[cf_index]);
+      }
+      return db_->NewCoalescingIterator(debug_ro, cfhs);
+    }
+    return std::unique_ptr<Iterator>(db_->NewIterator(debug_ro, cmp_cfh));
+  };
+
+  auto dump_debug_iter = [&](const char* label, const ReadOptions& debug_ro,
+                             bool use_multi_cf_iter) {
+    auto debug_iter = make_debug_iter(debug_ro, use_multi_cf_iter);
+    debug_iter->Seek(seek_key);
+
+    std::string sv_number;
+    const Status prop_s = debug_iter->GetProperty(
+        "rocksdb.iterator.super-version-number", &sv_number);
+    fprintf(stderr,
+            "%s before_prepare: valid=%d, status=%s, sv=%s, key=%s, "
+            "value_size=%zu\n",
+            label, static_cast<int>(debug_iter->Valid()),
+            debug_iter->status().ToString().c_str(),
+            prop_s.ok() ? sv_number.c_str() : prop_s.ToString().c_str(),
+            debug_iter->Valid() ? debug_iter->key().ToString(true).c_str()
+                                : "(invalid)",
+            debug_iter->Valid() ? debug_iter->value().size() : 0U);
+
+    if (!debug_iter->Valid()) {
+      return;
+    }
+
+    bool prepared = true;
+    if (debug_ro.allow_unprepared_value) {
+      prepared = debug_iter->PrepareValue();
+    }
+
+    fprintf(stderr,
+            "%s after_prepare: prepared=%d, valid=%d, status=%s, key=%s, "
+            "value_size=%zu, columns=%zu, wide_columns_ok=%d\n",
+            label, static_cast<int>(prepared),
+            static_cast<int>(debug_iter->Valid()),
+            debug_iter->status().ToString().c_str(),
+            debug_iter->Valid() ? debug_iter->key().ToString(true).c_str()
+                                : "(invalid)",
+            debug_iter->Valid() ? debug_iter->value().size() : 0U,
+            debug_iter->Valid() ? debug_iter->columns().size() : 0U,
+            static_cast<int>(
+                debug_iter->Valid() &&
+                VerifyWideColumns(debug_iter->value(), debug_iter->columns())));
+  };
+
+  ReadOptions standard_ro = ro;
+  standard_ro.table_index_factory = nullptr;
+  dump_debug_iter("Debug standard direct", standard_ro,
+                  /*use_multi_cf_iter=*/false);
+
+  if (udi_factory_) {
+    ReadOptions trie_ro = ro;
+    trie_ro.table_index_factory = udi_factory_.get();
+    dump_debug_iter("Debug trie direct", trie_ro,
+                    /*use_multi_cf_iter=*/false);
+  }
+
+  if (FLAGS_use_multi_cf_iterator) {
+    dump_debug_iter("Debug standard coalescing", standard_ro,
+                    /*use_multi_cf_iter=*/true);
+    if (udi_factory_) {
+      ReadOptions trie_ro = ro;
+      trie_ro.table_index_factory = udi_factory_.get();
+      dump_debug_iter("Debug trie coalescing", trie_ro,
+                      /*use_multi_cf_iter=*/true);
+    }
+  }
+}
+
 // Compare the two iterator, iter and cmp_iter are in the same position,
 // unless iter might be made invalidate or undefined because of
 // upper or lower bounds, or prefix extractor.
@@ -2162,7 +2257,8 @@ template <typename IterType, typename VerifyFuncType>
 void StressTest::VerifyIterator(
     ThreadState* thread, ColumnFamilyHandle* cmp_cfh, const ReadOptions& ro,
     IterType* iter, Iterator* cmp_iter, LastIterateOp op, const Slice& seek_key,
-    const std::string& op_logs, VerifyFuncType verify_func, bool* diverged) {
+    const std::vector<int>& rand_column_families, const std::string& op_logs,
+    VerifyFuncType verify_func, bool* diverged) {
   assert(diverged);
 
   if (*diverged) {
@@ -2209,6 +2305,21 @@ void StressTest::VerifyIterator(
     // seek key or lower bound. Disable the check for now.
     *diverged = true;
     return;
+  }
+
+  if (!ro.total_order_seek && options_.prefix_extractor != nullptr &&
+      ro.iterate_lower_bound != nullptr) {
+    const SliceTransform* prefix_extractor = options_.prefix_extractor.get();
+    if (!prefix_extractor->InDomain(seek_key) ||
+        !prefix_extractor->InDomain(*ro.iterate_lower_bound) ||
+        prefix_extractor->Transform(seek_key) !=
+            prefix_extractor->Transform(*ro.iterate_lower_bound)) {
+      // ReadOptions requires the seek target and iterate_lower_bound to share
+      // a prefix when prefix iteration is enabled. Skip verification for this
+      // undefined configuration.
+      *diverged = true;
+      return;
+    }
   }
 
   const SliceTransform* pe = (ro.total_order_seek || ro.auto_prefix_mode)
@@ -2334,6 +2445,8 @@ void StressTest::VerifyIterator(
   }
 
   if (*diverged) {
+    DumpIteratorDivergenceDiagnostics(cmp_cfh, ro, seek_key,
+                                      rand_column_families);
     fprintf(stderr, "VerifyIterator failed. Control CF %s\n",
             cmp_cfh->GetName().c_str());
     thread->stats.AddErrors(1);
@@ -3754,12 +3867,14 @@ void StressTest::Open(SharedState* shared, bool reopen) {
 
   fprintf(stdout,
           "Integrated BlobDB: blob files enabled %d, min blob size %" PRIu64
+          ", direct write enabled %d, direct write partitions %" PRIu32
           ", blob file size %" PRIu64
           ", blob compression type %s, blob GC enabled %d, cutoff %f, force "
           "threshold %f, blob compaction readahead size %" PRIu64
           ", blob file starting level %d\n",
           options_.enable_blob_files, options_.min_blob_size,
-          options_.blob_file_size,
+          options_.enable_blob_direct_write,
+          options_.blob_direct_write_partitions, options_.blob_file_size,
           CompressionTypeToString(options_.blob_compression_type).c_str(),
           options_.enable_blob_garbage_collection,
           options_.blob_garbage_collection_age_cutoff,
@@ -3837,9 +3952,8 @@ void StressTest::Open(SharedState* shared, bool reopen) {
     }
 
     options_.listeners.clear();
-    options_.listeners.emplace_back(
-        new DbStressListener(FLAGS_db, options_.db_paths, cf_descriptors,
-                             db_stress_listener_env, shared));
+    options_.listeners.emplace_back(new DbStressListener(
+        FLAGS_db, options_.db_paths, cf_descriptors, shared));
     RegisterAdditionalListeners();
 
     // If this is for DB reopen,  error injection may have been enabled.
@@ -4002,6 +4116,10 @@ void StressTest::Open(SharedState* shared, bool reopen) {
         }
       } else {
         TransactionDBOptions txn_db_options;
+        // Match the 10-minute lock_timeout used for explicit transactions
+        // in NewTxn(), rather than the 1-second default which is too short
+        // for stress tests under heavy contention (see T228932399).
+        txn_db_options.default_lock_timeout = 600000;
         assert(FLAGS_txn_write_policy <= TxnDBWritePolicy::WRITE_UNPREPARED);
         txn_db_options.write_policy =
             static_cast<TxnDBWritePolicy>(FLAGS_txn_write_policy);
@@ -4131,13 +4249,6 @@ void StressTest::Reopen(ThreadState* thread) {
       s = db_->FlushWAL(/*sync=*/true);
     } else {
       s = db_->SyncWAL();
-    }
-    if (s.IsNotSupported()) {
-      // Some WAL implementations (e.g., Warm Storage) do not support
-      // SyncWAL()/FlushWAL(sync=true) because their WritableFile is not
-      // sync-thread-safe. Fall back to FlushWAL(sync=false) to flush the
-      // internal buffer; persistence is handled by the WAL implementation.
-      s = db_->FlushWAL(/*sync=*/false);
     }
     if (!s.ok()) {
       fprintf(stderr,
@@ -4406,6 +4517,20 @@ void InitializeOptionsFromFlags(
       fLU64::FLAGS_super_block_alignment_space_overhead_ratio;
   if (udi_factory) {
     block_based_options.user_defined_index_factory = udi_factory;
+    if (FLAGS_use_udi_as_primary_index) {
+      block_based_options.use_udi_as_primary_index = true;
+    }
+    // Write fault injection can corrupt the UDI meta block during SST
+    // creation. In primary mode all reads route through the UDI, so a
+    // corrupted UDI block causes the reader to fail, making compaction
+    // read zero keys from the affected SST and triggering a false
+    // positive in record count verification. In secondary mode this is
+    // not an issue because reads fall back to the standard index.
+    if (FLAGS_use_udi_as_primary_index &&
+        (FLAGS_write_fault_one_in > 0 ||
+         FLAGS_metadata_write_fault_one_in > 0)) {
+      options.compaction_verify_record_count = false;
+    }
   }
   options.table_factory.reset(NewBlockBasedTableFactory(block_based_options));
   options.db_write_buffer_size = FLAGS_db_write_buffer_size;
@@ -4564,6 +4689,9 @@ void InitializeOptionsFromFlags(
 
   // Integrated BlobDB
   options.enable_blob_files = FLAGS_enable_blob_files;
+  options.enable_blob_direct_write = FLAGS_enable_blob_direct_write;
+  options.blob_direct_write_partitions =
+      static_cast<uint32_t>(FLAGS_blob_direct_write_partitions);
   options.min_blob_size = FLAGS_min_blob_size;
   options.blob_file_size = FLAGS_blob_file_size;
   options.blob_compression_type =
@@ -4719,6 +4847,8 @@ void InitializeOptionsFromFlags(
   options.uncache_aggressiveness = FLAGS_uncache_aggressiveness;
 
   options.memtable_op_scan_flush_trigger = FLAGS_memtable_op_scan_flush_trigger;
+  options.min_tombstones_for_range_conversion =
+      FLAGS_min_tombstones_for_range_conversion;
   options.compaction_options_universal.reduce_file_locking =
       FLAGS_universal_reduce_file_locking;
 }

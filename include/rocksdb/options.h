@@ -2304,10 +2304,17 @@ struct ReadOptions {
   // block based table index. The table_factory used for the column family
   // must support building/reading this index.
   //
-  // Forward scans (SeekToFirst, Seek, Next) and point lookups (Get) are
-  // supported. Reverse operations (SeekToLast, SeekForPrev, Prev) are not
-  // yet supported and will return NotSupported when this is set. Leave this
-  // null to use the native index for reverse operations.
+  // The UDI framework supports all iterator operations: forward scans
+  // (SeekToFirst, Seek, Next), reverse scans (SeekToLast, SeekForPrev, Prev),
+  // and point lookups (Get). Concrete UDI implementations may impose their
+  // own restrictions -- check the specific implementation's documentation.
+  //
+  // When BlockBasedTableOptions::use_udi_as_primary_index is true, this field
+  // does not need to be set -- all reads automatically use the UDI. If set
+  // while use_udi_as_primary_index is true, the UDI from
+  // BlockBasedTableOptions takes precedence. This field is only needed when
+  // the UDI is a secondary index and you want to explicitly select it for
+  // reads.
   const UserDefinedIndexFactory* table_index_factory = nullptr;
 
   // *** END options only relevant to iterators or scans ***

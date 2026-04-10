@@ -1656,6 +1656,12 @@ rocksdb_options_set_memtable_avg_op_scan_flush_trigger(rocksdb_options_t*,
 extern ROCKSDB_LIBRARY_API uint32_t
 rocksdb_options_get_memtable_avg_op_scan_flush_trigger(rocksdb_options_t*);
 
+extern ROCKSDB_LIBRARY_API void
+rocksdb_options_set_min_tombstones_for_range_conversion(rocksdb_options_t*,
+                                                        uint32_t);
+extern ROCKSDB_LIBRARY_API uint32_t
+rocksdb_options_get_min_tombstones_for_range_conversion(rocksdb_options_t*);
+
 enum {
   rocksdb_statistics_level_disable_all = 0,
   rocksdb_statistics_level_except_tickers =
@@ -3302,6 +3308,9 @@ extern ROCKSDB_LIBRARY_API void rocksdb_transaction_delete(
 extern ROCKSDB_LIBRARY_API void rocksdb_transaction_delete_cf(
     rocksdb_transaction_t* txn, rocksdb_column_family_handle_t* column_family,
     const char* key, size_t klen, char** errptr);
+
+extern ROCKSDB_LIBRARY_API void rocksdb_transaction_put_log_data(
+    rocksdb_transaction_t* txn, const char* blob, size_t len);
 
 extern ROCKSDB_LIBRARY_API void rocksdb_transactiondb_delete(
     rocksdb_transactiondb_t* txn_db, const rocksdb_writeoptions_t* options,

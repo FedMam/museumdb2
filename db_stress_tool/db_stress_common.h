@@ -184,11 +184,15 @@ DECLARE_int32(data_block_index_type);
 DECLARE_int32(index_block_search_type);
 DECLARE_double(uniform_cv_threshold);
 DECLARE_bool(use_trie_index);
+DECLARE_bool(use_udi_as_primary_index);
 DECLARE_bool(test_backward_scan);
 DECLARE_string(db);
 DECLARE_string(secondaries_base);
 DECLARE_bool(test_secondary);
 DECLARE_string(expected_values_dir);
+DECLARE_bool(expected_state_trace_debug);
+DECLARE_int64(expected_state_trace_debug_key);
+DECLARE_int32(expected_state_trace_debug_max_logs);
 DECLARE_bool(verify_checksum);
 DECLARE_bool(mmap_read);
 DECLARE_bool(mmap_write);
@@ -320,6 +324,8 @@ DECLARE_bool(blob_db_enable_gc);
 // Options for integrated BlobDB
 DECLARE_bool(allow_setting_blob_options_dynamically);
 DECLARE_bool(enable_blob_files);
+DECLARE_bool(enable_blob_direct_write);
+DECLARE_uint64(blob_direct_write_partitions);
 DECLARE_uint64(min_blob_size);
 DECLARE_uint64(blob_file_size);
 DECLARE_string(blob_compression_type);
@@ -448,10 +454,12 @@ DECLARE_int32(allow_resumption_one_in);
 DECLARE_bool(auto_refresh_iterator_with_snapshot);
 DECLARE_uint32(memtable_op_scan_flush_trigger);
 DECLARE_uint32(memtable_avg_op_scan_flush_trigger);
+DECLARE_uint32(min_tombstones_for_range_conversion);
 DECLARE_uint32(ingest_wbwi_one_in);
 DECLARE_bool(universal_reduce_file_locking);
 DECLARE_bool(use_multiscan);
 DECLARE_bool(multiscan_use_async_io);
+DECLARE_uint64(multiscan_max_prefetch_memory_bytes);
 
 // Compaction deletion trigger declarations for stress testing
 DECLARE_bool(enable_compaction_on_deletion_trigger);
@@ -497,6 +505,8 @@ inline enum RepFactory StringToRepFactory(const char* ctype) {
 extern enum RepFactory FLAGS_rep_factory;
 
 namespace ROCKSDB_NAMESPACE {
+void RegisterDbStressBdwFlagValidators();
+
 inline enum ROCKSDB_NAMESPACE::CompressionType StringToCompressionType(
     const char* ctype) {
   assert(ctype);
