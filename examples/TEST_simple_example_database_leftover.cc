@@ -29,8 +29,8 @@ int main() {
   std::unique_ptr<DB> db;
   Options options;
   // Optimize RocksDB. This is the easiest way to get RocksDB to perform well
-  options.IncreaseParallelism();
-  options.OptimizeLevelStyleCompaction();
+  // options.IncreaseParallelism();
+  // options.OptimizeLevelStyleCompaction();
   // create the DB if it's not already present
   options.create_if_missing = true;
 
@@ -38,17 +38,18 @@ int main() {
   Status s = DB::Open(options, kDBPath, &db);
   assert(s.ok());
 
-  for (int n = 0; n < 100000; ++n) {
+  for (int n = 0; n < 100; ++n) {
     WriteBatch batch;
     for (int m = 0; m < 100; ++m) {
       batch.Put(
         std::string("key") + std::to_string(n * 100 + m),
         std::string("value") + std::to_string(n * 100 + m));
     }
-    db->Write(WriteOptions(), &batch);
+    s = db->Write(WriteOptions(), &batch);
+    assert(s.ok());
   }
 
-  // do not delete DB
+  db.reset();
 
   return 0;
 }
