@@ -95,8 +95,10 @@ class BlockBasedTableFactory : public TableFactory {
                      void* opt_ptr) override;
   void InitializeOptions();
 
- private:
+  // Note: moved to protected: to use it in HilbertTableFactory
   BlockBasedTableOptions table_options_;
+
+ private:
   // Share some state among cloned instances
   struct SharedState {
     std::shared_ptr<CacheReservationManager> table_reader_cache_res_mgr;

@@ -17,9 +17,9 @@ void TEST_1ByteFull() {
   std::vector<std::vector<VarLenNumber>> encoded(0x100, std::vector<VarLenNumber>(0x100));
   for (uint32_t i = 0x00; i <= 0xff; ++i) {
     for (uint32_t j = 0x00; j <= 0xff; ++j) {
-      encoded[i][j] = PointToHilbertValue(VarLenPoint2D(VarLenNumber(1, i), VarLenNumber(1, j)));
+      encoded[i][j] = PointToHilbertCode(VarLenPoint2D(VarLenNumber(1, i), VarLenNumber(1, j)));
 
-      VarLenPoint2D decoded = HilbertValueToPoint(encoded[i][j]);
+      VarLenPoint2D decoded = HilbertCodeToPoint(encoded[i][j]);
       assert(decoded.GetX() == VarLenNumber(1, i));
       assert(decoded.GetY() == VarLenNumber(1, j));
 
@@ -38,8 +38,8 @@ void TEST_2BytesPartial() {
   for (int64_t code = 0x00000000; code <= 0x00ffffff; ++code) {
       VarLenNumber encoded(4, (uint32_t)code);
 
-      VarLenPoint2D decoded = HilbertValueToPoint(encoded);
-      assert(PointToHilbertValue(decoded) == encoded);
+      VarLenPoint2D decoded = HilbertCodeToPoint(encoded);
+      assert(PointToHilbertCode(decoded) == encoded);
 
       if (code != 0) {
         // assertion that the point is adjacent to the previous point
@@ -59,8 +59,8 @@ void TestNbytesRandomHelper(int max_samples, int n_bytes, int seed = 42) {
   std::vector<VarLenNumber> encoded(max_samples);
   for (int i = 0; i < max_samples; ++i) {
     VarLenPoint2D point(RandomNumber(mt, n_bytes), RandomNumber(mt, n_bytes));
-    encoded[i] = PointToHilbertValue(point);
-    VarLenPoint2D decoded = HilbertValueToPoint(encoded[i]);
+    encoded[i] = PointToHilbertCode(point);
+    VarLenPoint2D decoded = HilbertCodeToPoint(encoded[i]);
     assert(decoded.GetX() == point.GetX());
     assert(decoded.GetY() == point.GetY());
 
@@ -101,8 +101,8 @@ void TEST_2BytesClose() {
       VarLenNumber code1(2, num1);
       VarLenNumber code2(2, num2);
 
-      VarLenPoint2D point1 = HilbertValueToPoint(code1);
-      VarLenPoint2D point2 = HilbertValueToPoint(code2);
+      VarLenPoint2D point1 = HilbertCodeToPoint(code1);
+      VarLenPoint2D point2 = HilbertCodeToPoint(code2);
 
       uint32_t dx = std::max(point1.GetX().NumericalValue32(), point2.GetX().NumericalValue32()) - std::min(point1.GetX().NumericalValue32(), point2.GetX().NumericalValue32());
       uint32_t dy = std::max(point1.GetY().NumericalValue32(), point2.GetY().NumericalValue32()) - std::min(point1.GetY().NumericalValue32(), point2.GetY().NumericalValue32());
@@ -131,8 +131,8 @@ void TEST_8BytesClose() {
       VarLenNumber code1(8, num1);
       VarLenNumber code2(8, num2);
 
-      VarLenPoint2D point1 = HilbertValueToPoint(code1);
-      VarLenPoint2D point2 = HilbertValueToPoint(code2);
+      VarLenPoint2D point1 = HilbertCodeToPoint(code1);
+      VarLenPoint2D point2 = HilbertCodeToPoint(code2);
 
       uint64_t dx = std::max(point1.GetX().NumericalValue64(), point2.GetX().NumericalValue64()) - std::min(point1.GetX().NumericalValue64(), point2.GetX().NumericalValue64());
       uint64_t dy = std::max(point1.GetY().NumericalValue64(), point2.GetY().NumericalValue64()) - std::min(point1.GetY().NumericalValue64(), point2.GetY().NumericalValue64());
@@ -143,17 +143,17 @@ void TEST_8BytesClose() {
   }
 }
 
-void TEST_PointWithHilbertValue() {
+void TEST_PointWithHilbertCode() {
   std::mt19937 mt(48);
 
   for (int i = 0; i < 50000; ++i) {
     VarLenNumber code = RandomNumber(mt, 4);
-    VarLenPoint2D point = HilbertValueToPoint(code);
+    VarLenPoint2D point = HilbertCodeToPoint(code);
 
-    VarLenPoint2DWithHilbertValue hpoint1(code), hpoint2(point);
+    VarLenPoint2DWithHilbertCode hpoint1(code), hpoint2(point);
 
     assert(hpoint1.GetNumberLength() == hpoint2.GetNumberLength());
-    assert(hpoint1.GetHilbertValue() == hpoint2.GetHilbertValue());
+    assert(hpoint1.GetHilbertCode() == hpoint2.GetHilbertCode());
     assert(hpoint1.GetPoint() == hpoint2.GetPoint());
   }
 }
@@ -172,6 +172,6 @@ int main(void) {
   TEST(19BytesRandom);
   TEST(2BytesClose);
   TEST(8BytesClose);
-  TEST(PointWithHilbertValue);
+  TEST(PointWithHilbertCode);
   return 0;
 }

@@ -15,7 +15,7 @@ struct RTreeBuilder {
  private:
   struct RTreeEntryComparator {
     bool operator()(const RTreeEntry<TItem>& itemA, const RTreeEntry<TItem>& itemB) const {
-      return itemA.GetHilbertValue() < itemB.GetHilbertValue();
+      return itemA.GetHilbertCode() < itemB.GetHilbertCode();
     }
   };
 
@@ -36,7 +36,7 @@ struct RTreeBuilder {
     VerifyPointLength_(point);
 
     if (items_in_order_ && GetSize() > 0) {
-      int cmp = point.GetHilbertValue().Compare(inserted_items_[GetSize()-1].GetHilbertValue());
+      int cmp = point.GetHilbertCode().Compare(inserted_items_[GetSize()-1].GetHilbertCode());
       if (cmp <= 0) items_in_strict_order_ = false;
       if (cmp < 0) items_in_order_ = false;
     }
@@ -49,7 +49,7 @@ struct RTreeBuilder {
     items_in_order_ = true;
     items_in_strict_order_ = true;
     for (size_t i = 1; i < inserted_items_.size(); ++i) {
-      if (inserted_items_[i].GetHilbertValue() == inserted_items_[i-1].GetHilbertValue()) {
+      if (inserted_items_[i].GetHilbertCode() == inserted_items_[i-1].GetHilbertCode()) {
         items_in_strict_order_ = false;
         break;
       }
@@ -79,9 +79,9 @@ struct RTreeBuilder {
     size_t num_inserted_items = 0;
     std::list<RTreeEntry<TItem>> leaf_children;
     for (size_t el_index = 0; el_index < inserted_items_.size(); ++el_index) {
-      if (el_index > 0 && inserted_items_[el_index].GetHilbertValue() == prev_hilbert_value)
+      if (el_index > 0 && inserted_items_[el_index].GetHilbertCode() == prev_hilbert_value)
         continue;
-      prev_hilbert_value = inserted_items_[el_index].GetHilbertValue();
+      prev_hilbert_value = inserted_items_[el_index].GetHilbertCode();
 
       leaf_children.push_back(inserted_items_[el_index]);
       ++num_inserted_items;

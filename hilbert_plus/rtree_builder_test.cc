@@ -21,8 +21,8 @@ void TEST_NoSortNoStrictOrder() {
   std::mt19937 mt(51);
 
   for (size_t i = 0; i < 500000; ++i) {
-    VarLenNumber hilbertValue = RandomNumber(mt, 2);
-    items.emplace_back(hilbertValue, fruits[mt() % fruits.size()]);
+    VarLenNumber hilbertCode = RandomNumber(mt, 2);
+    items.emplace_back(hilbertCode, fruits[mt() % fruits.size()]);
   }
   sort(items.begin(), items.end());
   
@@ -42,8 +42,8 @@ void TEST_NoSortNoStrictOrder() {
       continue;
     prev_code = items[i].first;
 
-    auto find_result = tree.Find(HilbertValueToPoint(items[i].first)).value();
-    assert(find_result.GetHilbertValue() == items[i].first);
+    auto find_result = tree.Find(HilbertCodeToPoint(items[i].first)).value();
+    assert(find_result.GetHilbertCode() == items[i].first);
     assert(find_result.GetItem() == items[i].second);
   }
 }
@@ -53,8 +53,8 @@ void TEST_NoSortStrictOrder() {
   std::mt19937 mt(52);
 
   for (size_t i = 0; i < 500000; ++i) {
-    VarLenNumber hilbertValue = RandomNumber(mt, 8);
-    items.insert(std::make_pair(hilbertValue, fruits[mt() % fruits.size()]));
+    VarLenNumber hilbertCode = RandomNumber(mt, 8);
+    items.insert(std::make_pair(hilbertCode, fruits[mt() % fruits.size()]));
   }
 
   RTreeBuilder<std::string> tree_builder(4);
@@ -66,8 +66,8 @@ void TEST_NoSortStrictOrder() {
 
   RTree<std::string> tree = tree_builder.Build(2, 2);
   for (auto [hilbert_value, item]: items) {
-    auto find_result = tree.Find(HilbertValueToPoint(hilbert_value)).value();
-    assert(find_result.GetHilbertValue() == hilbert_value);
+    auto find_result = tree.Find(HilbertCodeToPoint(hilbert_value)).value();
+    assert(find_result.GetHilbertCode() == hilbert_value);
     assert(find_result.GetItem() == item);
   }
 }
@@ -91,8 +91,8 @@ void TEST_SortWithDuplicates() {
   tree.VerifyIntegrity();
 
   for (auto hilbert_value: hilbert_values) {
-    auto find_result = tree.Find(HilbertValueToPoint(hilbert_value)).value();
-    assert(find_result.GetHilbertValue() == hilbert_value);
+    auto find_result = tree.Find(HilbertCodeToPoint(hilbert_value)).value();
+    assert(find_result.GetHilbertCode() == hilbert_value);
     assert(find_result.GetItem() == fruits[hilbert_value.NumericalValue32() % fruits.size()]);
   }
 }
@@ -102,8 +102,8 @@ void TEST_SortNoDuplicates() {
   std::mt19937 mt(54);
 
   for (size_t i = 0; i < 500000; ++i) {
-    VarLenNumber hilbertValue = RandomNumber(mt, 8);
-    items_set.insert(std::make_pair(hilbertValue, fruits[mt() % fruits.size()]));
+    VarLenNumber hilbertCode = RandomNumber(mt, 8);
+    items_set.insert(std::make_pair(hilbertCode, fruits[mt() % fruits.size()]));
   }
 
   std::vector<std::pair<VarLenNumber, std::string>> items;
@@ -120,8 +120,8 @@ void TEST_SortNoDuplicates() {
 
   RTree<std::string> tree = tree_builder.Build(40, 40);
   for (auto [hilbert_value, item]: items) {
-    auto find_result = tree.Find(HilbertValueToPoint(hilbert_value)).value();
-    assert(find_result.GetHilbertValue() == hilbert_value);
+    auto find_result = tree.Find(HilbertCodeToPoint(hilbert_value)).value();
+    assert(find_result.GetHilbertCode() == hilbert_value);
     assert(find_result.GetItem() == item);
   }
 }

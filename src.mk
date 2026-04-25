@@ -346,6 +346,10 @@ LIB_SOURCES =                                                   \
   utilities/wal_filter.cc                                       \
   utilities/write_batch_with_index/write_batch_with_index.cc    \
   utilities/write_batch_with_index/write_batch_with_index_internal.cc    \
+  hilbert/hilbert_curve.cc                                      \
+  hilbert/ser_tree_builder.cc                                   \
+  table/hilbert/hilbert_table_builder.cc                        \
+  table/hilbert/hilbert_table_factory.cc
 
 ifeq (,$(shell $(CXX) -fsyntax-only -maltivec -xc /dev/null 2>&1))
 LIB_SOURCES_ASM =\

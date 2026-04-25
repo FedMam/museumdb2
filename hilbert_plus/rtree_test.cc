@@ -260,12 +260,12 @@ void TEST_TimeComplexity() {
 
   std::vector<VarLenPoint2D> points;
   for (size_t i = 0; i < codes.size(); ++i)
-    points.push_back(HilbertValueToPoint(codes[i]));
+    points.push_back(HilbertCodeToPoint(codes[i]));
 
   for (int i = 0; i < 500000; ++i) {
     uint32_t index = mt() % codes.size();
     auto find_result = tree.Find(points[index]).value();
-    assert(find_result.GetHilbertValue() == codes[index]);
+    assert(find_result.GetHilbertCode() == codes[index]);
     assert(find_result.GetPointWithoutHilbertValue() == points[index]);
     assert(find_result.GetItem() == &fruits[index % fruits.size()]);
 
@@ -297,11 +297,11 @@ void TEST_LotsOfMisses() {
 
   for (int i = 0; i < 500000; ++i) {
     VarLenNumber code = RandomNumber(mt, 8);
-    VarLenPoint2D point = HilbertValueToPoint(code);
+    VarLenPoint2D point = HilbertCodeToPoint(code);
 
     auto find_result_optional = tree.Find(point);
     assert(!find_result_optional.has_value() || (
-      codes.find(find_result_optional.value().GetHilbertValue()) != codes.end() &&
+      codes.find(find_result_optional.value().GetHilbertCode()) != codes.end() &&
       find_result_optional.value().GetItem() == &fake_item
     ));
   }

@@ -10,4 +10,4 @@ simple_example
 transaction_example
 
 # TODO(FedMam): remove
-TEST_simple_example_database_leftover
+TEST_hilbert

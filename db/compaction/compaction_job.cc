@@ -61,6 +61,8 @@
 #include "util/hash_containers.h"
 #include "util/stop_watch.h"
 
+#include "table/hilbert/hilbert_table_util.h"
+
 namespace ROCKSDB_NAMESPACE {
 
 const char* GetCompactionReasonString(CompactionReason compaction_reason) {
@@ -791,6 +793,16 @@ void CompactionJob::CleanupAbortedSubcompactions() {
       for (const std::string& file_path :
            sub_compact.Outputs(is_proximal_level)->GetOutputFilePaths()) {
         Status s = env_->DeleteFile(file_path);
+
+        // === spatial data support ===
+        /*if (compact_->compaction->column_family_data()->GetLatestCFOptions().spatial_data) {
+          std::string ser_tree_file_path = GetSERTreeFileName(file_path);
+          if (env_->FileExists(ser_tree_file_path).ok()) {
+            s = s.UpdateIfOk(env_->DeleteFile(ser_tree_file_path));
+          }
+        }*/
+        // ============================
+
         if (s.ok()) {
           // Count SST vs blob files by checking extension
           if (file_path.find(".sst") != std::string::npos) {

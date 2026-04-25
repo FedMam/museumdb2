@@ -95,7 +95,7 @@ inline int ReverseRotateFlipSubQuadrant(int sub_quadrant, bool flip, Rotation ro
 
 }
 
-VarLenNumber PointToHilbertValue(const VarLenPoint2D& point) {
+HilbertCode PointToHilbertCode(const UInt64Point& point) {
   // We recursively divide the unit square into quadrants.
   // At each iteration of the Hilbert curve, each quadrant is divided into four quadrant.
   // In each quadrant, the current iteration of the Hilbert curve can be
@@ -116,17 +116,18 @@ VarLenNumber PointToHilbertValue(const VarLenPoint2D& point) {
   // The rotations in sub-quadrants are: 270, 0, 0 and 90 degrees (subq. 0 to subq. 3).
   // Also the U shape in sub-quadrants 0 and 3 is flipped.
 
-  size_t length = point.GetX().GetLength();  // by definition of VarLenPoint2D, it is equal to point.GetY().GetLength();
-  VarLenNumber code(length * 2);
+  HilbertCode code(0, 0);
 
-  int current_bit = length * 8 - 1;
+  int current_bit = 64 - 1;
   Rotation current_rotation = k0;
   bool current_flip = false;
 
   while (current_bit >= 0) {
     Rotation next_rotation;
     bool next_flip;
-    int point_bits = (point.GetX().IsBitSetAt(current_bit) ? 0b10 : 0b00) + (point.GetY().IsBitSetAt(current_bit) ? 0b01 : 0b00);
+    int point_bits =
+      ((point.GetX() & (1 << current_bit)) != 0 ? 0b10 : 0b00) +
+      ((point.GetY() & (1 << current_bit)) != 0 ? 0b01 : 0b00);
     
     int sub_quadrant = 0;
     if (point_bits == 0b10)
@@ -136,13 +137,7 @@ VarLenNumber PointToHilbertValue(const VarLenPoint2D& point) {
     else if (point_bits == 0b11)
       sub_quadrant = 2;
 
-    // DEBUG
-    // int sub_quadrant_for_point_bits = sub_quadrant;
-
     sub_quadrant = RotateFlipSubQuadrant(sub_quadrant, current_flip, current_rotation);
-
-    // DEBUG
-    // std::cout<<point.GetX().NumericalValue32()<<","<<point.GetY().NumericalValue32()<<current_bit<<" "<<current_flip<<" "<<current_rotation<<" "<<sub_quadrant<<" "<<sub_quadrant_for_point_bits<<std::endl;
 
     switch(sub_quadrant) {
       case 0:
@@ -183,19 +178,17 @@ VarLenNumber PointToHilbertValue(const VarLenPoint2D& point) {
   return code;
 }
 
-VarLenPoint2D HilbertValueToPoint(const VarLenNumber& hilbertValue) {
+UInt64Point HilbertCodeToPoint(const HilbertCode& hilbertCode) {
   // Does precisely the inversion of what the previous function does.
 
-  assert(hilbertValue.GetLength() % 2 == 0);
-  size_t length = hilbertValue.GetLength() / 2;
-  VarLenNumber x(length), y(length);
+  uint64_t x = 0, y = 0;
 
-  int current_bit = length * 8 - 1;
+  int current_bit = 64 - 1;
   Rotation current_rotation = k0;
   bool current_flip = false;
 
   while (current_bit >= 0) {
-    int sub_quadrant = (hilbertValue.IsBitSetAt(2 * current_bit + 1) ? 0b10 : 0b00) + (hilbertValue.IsBitSetAt(2 * current_bit) ? 0b01 : 0b00);
+    int sub_quadrant = (hilbertCode.IsBitSetAt(2 * current_bit + 1) ? 0b10 : 0b00) + (hilbertCode.IsBitSetAt(2 * current_bit) ? 0b01 : 0b00);
     
     Rotation next_rotation = current_rotation;
     bool next_flip = current_flip;
@@ -218,21 +211,18 @@ VarLenPoint2D HilbertValueToPoint(const VarLenNumber& hilbertValue) {
 
     int sub_quadrant_for_point_bits = ReverseRotateFlipSubQuadrant(sub_quadrant, current_flip, current_rotation);
 
-    // DEBUG
-    // std::cout<<hilbertValue.NumericalValue32()<<current_bit<<" "<<current_flip<<" "<<current_rotation<<" "<<sub_quadrant<<" "<<sub_quadrant_for_point_bits<<std::endl;
-
     switch (sub_quadrant_for_point_bits) {
       case 0:
         break;
       case 1:
-        y.SetBitAt(current_bit);
+        y |= (1 << current_bit);
         break;
       case 2:
-        x.SetBitAt(current_bit);
-        y.SetBitAt(current_bit);
+        x |= (1 << current_bit);
+        y |= (1 << current_bit);
         break;
       case 3:
-        x.SetBitAt(current_bit);
+        x |= (1 << current_bit);
         break;
     }
 
@@ -241,7 +231,7 @@ VarLenPoint2D HilbertValueToPoint(const VarLenNumber& hilbertValue) {
     --current_bit;
   }
 
-  return VarLenPoint2D(x, y);
+  return UInt64Point(x, y);
 }
 
 }

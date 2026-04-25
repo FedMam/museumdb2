@@ -50,7 +50,7 @@ VarLenRectangle RandomRectangle(std::mt19937& mt, int n_bytes) {
 template<typename TItem>
 inline bool ItemInRangeResult(const std::vector<RTreeEntry<TItem>>& range_result, const TItem& item, const VarLenPoint2D& expected_point) {
   for (auto entry: range_result)
-    if (entry.GetItem() == item && entry.GetPointWithoutHilbertValue() == expected_point)
+    if (entry.GetItem() == item && entry.GetPointWithoutHilbertCode() == expected_point)
       return true;
   return false;
 }

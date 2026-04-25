@@ -26,6 +26,8 @@
 #include "util/autovector.h"
 #include "util/defer.h"
 
+#include "table/hilbert/hilbert_table_util.h"
+
 namespace ROCKSDB_NAMESPACE {
 
 namespace {
@@ -472,6 +474,16 @@ void DBImpl::DeleteObsoleteFileImpl(int job_id, const std::string& fname,
   TEST_SYNC_POINT_CALLBACK("DBImpl::DeleteObsoleteFileImpl::BeforeDeletion",
                            const_cast<std::string*>(&fname));
   IGNORE_STATUS_IF_ERROR(Status::IOError());
+
+  // === spatial data support ===
+  // TODO (FedMam): is it possible to check if the file belongs to a spatial-data column family?
+  /*if (type == kTableFile) {
+    std::string ser_tree_file_name = GetSERTreeFileName(fname);
+    if (env_->FileExists(ser_tree_file_name).ok()) {
+      env_->DeleteFile(ser_tree_file_name);
+    }
+  }*/
+  // ============================
 
   Status file_deletion_status;
   if (type == kTableFile || type == kBlobFile || type == kWalFile) {

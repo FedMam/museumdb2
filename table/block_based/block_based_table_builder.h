@@ -122,6 +122,15 @@ class BlockBasedTableBuilder : public TableBuilder {
   void TEST_InjectIOError();
 #endif  // !NDEBUG
 
+  // === spatial data support ===
+  friend class HilbertTableBuilder;
+ 
+ private:
+  const BlockHandle& PendingHandle() const;
+
+  const std::string& LastInternalKey() const;
+  // ============================
+
  private:
   bool ok() const;
 
@@ -190,7 +199,9 @@ class BlockBasedTableBuilder : public TableBuilder {
   // Can be used to ensure that two adjacent entries never live in
   // the same data block.  Most clients should not need to use this method.
   // REQUIRES: Finish(), Abandon() have not been called
-  void Flush(const Slice* first_key_in_next_block);
+  // 
+  // Note (FedMam): this method is marked virtual to override it in HilbertTableBuilder
+  virtual void Flush(const Slice* first_key_in_next_block);
 
   // Some compression libraries fail when the uncompressed size is bigger than
   // int. If uncompressed size is bigger than kCompressionSizeLimit, don't

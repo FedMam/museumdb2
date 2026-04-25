@@ -403,6 +403,11 @@ struct ColumnFamilyOptions : public AdvancedColumnFamilyOptions {
   // around 300.
   uint32_t uncache_aggressiveness = 0;
 
+  // --------------------
+  // SPATIAL DATA SUPPORT
+  bool spatial_data = false;
+  // --------------------
+
   // Create ColumnFamilyOptions with default values for all fields
   ColumnFamilyOptions();
   // Create ColumnFamilyOptions from Options

@@ -1052,6 +1052,7 @@ class TableFactory : public Customizable {
   static const char* kBlockBasedTableName() { return "BlockBasedTable"; }
   static const char* kPlainTableName() { return "PlainTable"; }
   static const char* kCuckooTableName() { return "CuckooTable"; }
+  static const char* kHilbertTableName() { return "HilbertTable"; }
 
   // Creates and configures a new TableFactory from the input options and id.
   static Status CreateFromString(const ConfigOptions& config_options,
@@ -1124,6 +1125,10 @@ class TableFactory : public Customizable {
 
   // Return is delete range supported
   virtual bool IsDeleteRangeSupported() const { return false; }
+
+  // === spatial data support ===
+  virtual bool IsSpatialDataSupported() const { return false; }
+  // ============================
 };
 
 // Create a special table factory that can open either of the supported

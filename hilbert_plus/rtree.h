@@ -25,29 +25,29 @@ struct RTreeBuilder;
 template<typename TItem>
 struct RTreeEntry {
  public:
-  RTreeEntry(const PointWithHilbertCode& point,
+  RTreeEntry(const VarLenPoint2DWithHilbertValue& point,
              const TItem& item)
     : point_(point),
       item_(item) { }
-
-  inline const PointWithHilbertCode& GetPointWithHilbertCode() const { return point_; }
-  inline const UInt64Point& GetPointWithoutHilbertCode() const { return point_.GetPoint(); }
-  inline const HilbertCode& GetHilbertCode() const { return point_.GetHilbertCode(); }
+  
+  inline const VarLenPoint2DWithHilbertValue& GetPointWithHilbertCode() const { return point_; }
+  inline const VarLenPoint2D& GetPointWithoutHilbertValue() const { return point_.GetPoint(); }
+  inline const VarLenNumber& GetHilbertCode() const { return point_.GetHilbertCode(); }
   inline const TItem& GetItem() const { return item_; }
 
   // Returns a degenerate rectangle of one point
-  inline const UInt64Rectangle GetBoundingRectangle() const {
-    return UInt64Rectangle(point_.GetPoint(), point_.GetPoint());
+  inline const VarLenRectangle GetBoundingRectangle() const {
+    return VarLenRectangle(point_.GetPoint(), point_.GetPoint());
   }
 
  private:
-  PointWithHilbertCode point_;
-  HilbertCode hilbert_code_;
+  VarLenPoint2DWithHilbertValue point_;
+  VarLenNumber hilbert_code_;
   TItem item_;
 };
 
 // This is a Hilbert R-Tree implementation. This structure is
-// a map which stores 2D points, represented as PointWithHilbertCode's,
+// a map which stores 2D points, represented as VarLenPoint2DWithHilbertValue's,
 // associated with their Hilbert values and pointers to objects
 // of custom type (be careful not to use these after the object
 // is destroyed). It supports effective search, rectangular range queries, and
@@ -113,18 +113,18 @@ class RTree {
     inline RTreeNode* GetParent() const { return parent_; }
 
     // Largest Hilbert value of all the node's children.
-    inline const HilbertCode& GetLHV() const { return lhv_; }
+    inline const VarLenNumber& GetLHV() const { return lhv_; }
 
     // Minimum bounding rectangle of all the node's children.
-    inline const UInt64Rectangle& GetMBR() const { return mbr_; }
+    inline const VarLenRectangle& GetMBR() const { return mbr_; }
 
     // Sets lhv_ to max(lhv_, newLhv). Does not propagate changes upwards.
-    inline void AdjustLHV(const HilbertCode& newLhv) {
+    inline void AdjustLHV(const VarLenNumber& newLhv) {
       lhv_ = std::max(lhv_, newLhv);
     }
 
     // Sets mbr_ to MBR(mbr_, newMbr). Does not propagate changes upwards.
-    inline void AdjustMBR(const UInt64Rectangle& newMbr) {
+    inline void AdjustMBR(const VarLenRectangle& newMbr) {
       mbr_ = mbr_.MBR(newMbr);
     }
 
@@ -206,8 +206,8 @@ class RTree {
     std::list<RTreeNode*> non_leaf_children_;
     std::list<RTreeEntry<TItem>> leaf_children_;
 
-    HilbertCode lhv_;  // largest Hilbert value
-    UInt64Rectangle mbr_;  // minimum bounding rectangle
+    VarLenNumber lhv_;  // largest Hilbert value
+    VarLenRectangle mbr_;  // minimum bounding rectangle
   };
 
  public:
@@ -215,9 +215,10 @@ class RTree {
   // - number_length: the length in bytes of all point coordinates;
   // - leaf_capacity: maximum capacity of leaf nodes (only affects time and space usage). Must be at least 2;
   // - non_leaf_capacity: maximum capacity of non-leaf nodes (same). Must be at least 2.
-  RTree(size_t leaf_capacity,
+  RTree(size_t number_length,
+        size_t leaf_capacity,
         size_t non_leaf_capacity)
-    : RTree(leaf_capacity, non_leaf_capacity, 0, new RTreeNode()) { }
+    : RTree(number_length, leaf_capacity, non_leaf_capacity, 0, new RTreeNode()) { }
 
   ~RTree() {
     delete root_;
@@ -226,15 +227,16 @@ class RTree {
   RTree(const RTree<TItem>& other) = delete;
   RTree(RTree<TItem>&& other) = delete;
   
+  inline size_t GetNumberLength() const { return number_length_; }
   inline size_t GetLeafCapacity() const { return leaf_capacity_; }
   inline size_t GetNonLeafCapacity() const { return non_leaf_capacity_; }
 
   inline size_t GetSize() const { return tree_size_; }
 
-  std::optional<RTreeEntry<TItem>> Find(const UInt64Point& key_point) const {
+  std::optional<RTreeEntry<TItem>> Find(const VarLenPoint2D& key_point) const {
     std::vector<RTreeEntry<TItem>> result;
 
-    SearchRec_(root_, UInt64Rectangle(key_point, key_point), result);
+    SearchRec_(root_, VarLenRectangle(key_point, key_point), result);
 
     if (result.empty())
       return std::optional<RTreeEntry<TItem>>();
@@ -242,7 +244,7 @@ class RTree {
     return result[0];
   }
 
-  std::vector<RTreeEntry<TItem>> RangeQuery(const UInt64Rectangle& rect) const  {
+  std::vector<RTreeEntry<TItem>> RangeQuery(const VarLenRectangle& rect) const  {
     std::vector<RTreeEntry<TItem>> result;
 
     SearchRec_(root_, rect, result);
@@ -251,11 +253,13 @@ class RTree {
   }
 
   // Returns true if the item at key_point already existed and had been replaced.
-  bool InsertOrReplace(const PointWithHilbertCode& key_point, const TItem& item) {
+  bool InsertOrReplace(const VarLenPoint2DWithHilbertValue& key_point, const TItem& item) {
+    VerifyPointLength_(key_point);
+
     RTreeEntry<TItem> entry(key_point, item);
 
     auto [was_replaced, maybe_new_node] = InsertOrReplaceRec_(root_, entry);
-
+    
     if (maybe_new_node) {
       std::list<RTreeNode*> new_root_children = { maybe_new_node, root_ };
       RTreeNode* new_root = new RTreeNode(new_root_children);
@@ -276,7 +280,7 @@ class RTree {
   // Should be only used in tests.
   void VerifyIntegrity() const {
     size_t actual_size = 0;
-    VerifyIntegrityRec_(root_, HilbertCode(0), &actual_size);
+    VerifyIntegrityRec_(root_, VarLenNumber(0), &actual_size);
     assert(actual_size == tree_size_);
   }
 
@@ -284,24 +288,36 @@ class RTree {
   friend class RTreeDumper;
 
  private:
-  RTree(size_t leaf_capacity,
+  RTree(size_t number_length,
+        size_t leaf_capacity,
         size_t non_leaf_capacity,
         size_t tree_size,
         RTreeNode* root)
-    : leaf_capacity_(leaf_capacity),
+    : number_length_(number_length),
+      leaf_capacity_(leaf_capacity),
       non_leaf_capacity_(non_leaf_capacity),
       tree_size_(tree_size),
       root_(root) {
+    assert(number_length >= 1);
     assert(leaf_capacity >= 2);
     assert(non_leaf_capacity >= 2);
   }
 
-  void SearchRec_(RTreeNode* curr_node, const UInt64Rectangle& rect, std::vector<RTreeEntry<TItem>>& result) const {
+  // Throws an error if point's coordinates byte length does not match number_length (used in queries)
+  inline void VerifyPointLength_(const VarLenPoint2DWithHilbertValue& point) const {
+    assert(point.GetNumberLength() == number_length_);
+  }
+
+  inline void VerifyHilbertValueLength_(const VarLenNumber& hilbertValue) const {
+    assert(hilbertValue.GetLength() == number_length_ * 2);
+  }
+
+  void SearchRec_(RTreeNode* curr_node, const VarLenRectangle& rect, std::vector<RTreeEntry<TItem>>& result) const {
     assert(curr_node != nullptr);
 
     if (curr_node->IsLeaf()) {
       for (auto iter = curr_node->leaf_children_.begin(); iter != curr_node->leaf_children_.end(); ++iter) {
-        if (rect.Contains((*iter).GetPointWithoutHilbertCode()))
+        if (rect.Contains((*iter).GetPointWithoutHilbertValue()))
           result.push_back((*iter));
       }
     } else {
@@ -385,13 +401,13 @@ class RTree {
     }
   }
 
-  // prev_lhv: largest Hilbert value found in previously visited nodes (minor issue: does not check that there is exactly one 0 value)
+  // prev_lhv: largest Hilbert value found in previously visited nodes (value of 0 with length 0 is used as -INF)
   // actual_size: pointer to a value in which we'll record the number of items in it
   // Returns: largest Hilbert value found yet
-  HilbertCode VerifyIntegrityRec_(RTreeNode* curr_node, const HilbertCode& prev_lhv, size_t* actual_size) const {
+  VarLenNumber VerifyIntegrityRec_(RTreeNode* curr_node, const VarLenNumber& prev_lhv, size_t* actual_size) const {
     assert(curr_node != nullptr);
 
-    HilbertCode lhv = prev_lhv;
+    VarLenNumber lhv = prev_lhv;
 
     if (curr_node->IsLeaf())
       assert(curr_node->GetSize() <= leaf_capacity_);
@@ -399,8 +415,8 @@ class RTree {
       assert(curr_node->GetSize() <= non_leaf_capacity_);
 
     // This checks that the node's stored LHV and MBR values are valid
-    HilbertCode old_node_lhv = curr_node->GetLHV();
-    UInt64Rectangle old_node_mbr = curr_node->GetMBR();
+    VarLenNumber old_node_lhv = curr_node->GetLHV();
+    VarLenRectangle old_node_mbr = curr_node->GetMBR();
     curr_node->RecalculateLHVAndMBR();
     assert(old_node_lhv == curr_node->GetLHV() && old_node_mbr == curr_node->GetMBR());
     
@@ -408,7 +424,8 @@ class RTree {
       (*actual_size) += curr_node->GetSize();
 
       for (auto iter = curr_node->leaf_children_.begin(); iter != curr_node->leaf_children_.end(); ++iter) {
-        assert(lhv.IsZero() || ((*iter).GetHilbertCode() > lhv));
+        VerifyHilbertValueLength_((*iter).GetHilbertCode());
+        assert((lhv.GetLength() == 0) || ((*iter).GetHilbertCode() > lhv));
         lhv = (*iter).GetHilbertCode();
       }
     } else {

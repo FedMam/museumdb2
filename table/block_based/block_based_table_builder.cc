@@ -3060,4 +3060,14 @@ const std::string BlockBasedTable::kFullFilterBlockPrefix = "fullfilter.";
 const std::string BlockBasedTable::kPartitionedFilterBlockPrefix =
     "partitionedfilter.";
 
+// === spatial data support ===
+const BlockHandle& BlockBasedTableBuilder::PendingHandle() const {
+  return rep_->pending_handle;
+}
+
+const std::string& BlockBasedTableBuilder::LastInternalKey() const {
+  return rep_->last_ikey;
+}
+// ============================
+
 }  // namespace ROCKSDB_NAMESPACE
