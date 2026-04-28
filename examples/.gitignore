@@ -11,3 +11,4 @@ transaction_example
 
 # TODO(FedMam): remove
 TEST_hilbert
+TEST_comparison

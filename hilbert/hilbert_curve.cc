@@ -7,6 +7,36 @@
 
 namespace ROCKSDB_NAMESPACE {
 
+std::string HilbertCode::ToString() const {
+  uint8_t bytes[sizeof(uint64_t) * 2];
+  for (unsigned i = 0; i < sizeof(uint64_t); ++i) {
+    unsigned byte_offset = 8 * (sizeof(uint64_t) - i - 1);
+    bytes[i] = (upper_ & ((uint64_t)0xff << byte_offset)) >> byte_offset;
+  }
+  for (unsigned i = 0; i < sizeof(uint64_t); ++i) {
+    unsigned byte_offset = 8 * (sizeof(uint64_t) - i - 1);
+    bytes[i + sizeof(uint64_t)] = (lower_ & ((uint64_t)0xff << byte_offset)) >> byte_offset;
+  }
+  return std::string(reinterpret_cast<const char*>(bytes), sizeof(bytes));
+}
+
+HilbertCode HilbertCode::FromString(const std::string& str) {
+  HilbertCode code;
+
+  assert(IsValidHilbertCodeString(str));
+
+  for (unsigned i = 0; i < sizeof(uint64_t); ++i) {
+    unsigned byte_offset = 8 * (sizeof(uint64_t) - i - 1);
+    code.upper_ |= ((uint64_t)(0xff & (uint8_t)str[i])) << byte_offset;
+  }
+  for (unsigned i = 0; i < sizeof(uint64_t); ++i) {
+    unsigned byte_offset = 8 * (sizeof(uint64_t) - i - 1);
+    code.lower_ |= ((uint64_t)(0xff & (uint8_t)str[i + sizeof(uint64_t)])) << byte_offset;
+  }
+  
+  return code;
+}
+
 namespace {
 
 enum Rotation {

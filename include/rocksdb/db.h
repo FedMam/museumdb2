@@ -35,6 +35,8 @@
 #include "rocksdb/version.h"
 #include "rocksdb/wide_columns.h"
 
+#include "hilbert/geometry.h"
+
 namespace ROCKSDB_NAMESPACE {
 
 struct ColumnFamilyOptions;
@@ -2221,6 +2223,17 @@ class DB {
   virtual Status TryCatchUpWithPrimary() {
     return Status::NotSupported("Supported only by secondary instance");
   }
+
+  // === spatial data support ===
+  
+  // Get all spatial data entries which are located inside rectangle.
+  virtual std::vector<std::pair<UInt64Point, std::string>> RectangularRangeQuery(
+      const ReadOptions& read_options,
+      ColumnFamilyHandle* column_family,
+      const UInt64Rectangle& rectangle,
+      Status* s) = 0;
+
+  // ============================
 };
 
 struct WriteStallStatsMapKeys {

@@ -42,13 +42,13 @@ struct UInt64Rectangle {
     return left_ <= right_ && top_ <= bottom_;
   }
 
-  inline bool Contains(const UInt64Point& point) {
+  inline bool Contains(const UInt64Point& point) const {
     if (!IsValid()) return false;
     return left_ <= point.GetX() && point.GetX() <= right_ &&
            top_ <= point.GetY() && point.GetY() <= bottom_;
   }
 
-  inline bool Intersects(const UInt64Rectangle& other) {
+  inline bool Intersects(const UInt64Rectangle& other) const {
     if (!IsValid()) return false;
     return right_ >= other.left_ &&
            left_ <= other.right_ &&
@@ -56,7 +56,7 @@ struct UInt64Rectangle {
            top_ <= other.bottom_;
   }
 
-  inline UInt64Rectangle MBR(const UInt64Point& point) {
+  inline UInt64Rectangle MBR(const UInt64Point& point) const {
     if (!IsValid()) return UInt64Rectangle(point, point);
     return UInt64Rectangle(
       std::min(left_, point.GetX()),
@@ -65,7 +65,7 @@ struct UInt64Rectangle {
       std::max(bottom_, point.GetY()));
   }
 
-  inline UInt64Rectangle MBR(const UInt64Rectangle& other) {
+  inline UInt64Rectangle MBR(const UInt64Rectangle& other) const {
     if (!IsValid()) return other;
     if (!other.IsValid()) return *this;
     return UInt64Rectangle(
@@ -84,6 +84,31 @@ struct UInt64Rectangle {
   uint64_t top_;
   uint64_t right_;
   uint64_t bottom_;
+};
+
+} // namespace ROCKSDB_NAMESPACE
+
+namespace std {
+
+namespace {
+
+uint64_t splitmix64(uint64_t x) {
+  uint64_t z = x;
+  z += 0x9e3779b97f4a7c15ull;
+  z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
+  z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
+  return z ^ (z >> 31);
+}
+
+}
+
+template<>
+struct hash<ROCKSDB_NAMESPACE::UInt64Point> {
+  size_t operator()(const ROCKSDB_NAMESPACE::UInt64Point& point) const {
+    uint64_t xhash = hash<uint64_t>{}(point.GetX());
+    uint64_t yhash = hash<uint64_t>{}(point.GetY());
+    return splitmix64(splitmix64(xhash) ^ (splitmix64(yhash) << 2)) + splitmix64(yhash);
+  }
 };
 
 }

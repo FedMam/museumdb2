@@ -3418,6 +3418,26 @@ class DBImpl : public DB {
   // The number of LockWAL called without matching UnlockWAL call.
   // See also lock_wal_write_token_
   uint32_t lock_wal_count_ = 0;
+
+  // === spatial data support ===
+
+  // Get all spatial data entries which are located inside rectangle.
+  // Warning: will fail if column_family does not support spatial data.
+  inline std::vector<std::pair<UInt64Point, std::string>> RectangularRangeQuery(
+      const ReadOptions& read_options,
+      ColumnFamilyHandle* column_family,
+      const UInt64Rectangle& rectangle,
+      Status* s) override {
+    return RectangularRangeQueryImpl(read_options, column_family, rectangle, result);
+  }
+
+  std::vector<std::pair<UInt64Point, std::string>> RectangularRangeQueryImpl(
+      const ReadOptions& read_options,
+      ColumnFamilyHandle* column_family,
+      const UInt64Rectangle& rectangle,
+      Status* s);
+  
+  // ============================
 };
 
 class GetWithTimestampReadCallback : public ReadCallback {

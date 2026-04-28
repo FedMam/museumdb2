@@ -3,6 +3,8 @@
 //  COPYING file in the root directory) and Apache 2.0 License
 //  (found in the LICENSE.Apache file in the root directory).
 
+// The same as TEST_comparison but without SER-trees for speed comparison
+
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -30,9 +32,9 @@ using ROCKSDB_NAMESPACE::BlockBasedTableOptions;
 using ROCKSDB_NAMESPACE::HilbertTableFactory;
 
 #if defined(OS_WIN)
-std::string kDBPath = "C:\\Windows\\TEMP\\rocksdb_TEST_hilbert";
+std::string kDBPath = "C:\\Windows\\TEMP\\rocksdb_TEST_comparison";
 #else
-std::string kDBPath = "/tmp/rocksdb_TEST_hilbert";
+std::string kDBPath = "/tmp/rocksdb_TEST_comparison";
 #endif
 
 int main() {
@@ -43,10 +45,6 @@ int main() {
   // options.OptimizeLevelStyleCompaction();
   // create the DB if it's not already present
   options.create_if_missing = true;
-
-  options.spatial_data = true;
-  auto hilbert_factory = std::make_shared<HilbertTableFactory>(BlockBasedTableOptions());
-  options.table_factory = hilbert_factory;
 
   // open DB
   Status s = DB::Open(options, kDBPath, &db);
@@ -61,7 +59,7 @@ int main() {
     for (int m = 0; m < 0x80; ++m) {
       HilbertCode code(0, 0x10000 + n * 0x80 + m);
 
-      std::string key = code.ToString();
+      std::string key(reinterpret_cast<const char*>(&code), sizeof(HilbertCode));
       std::string value = std::string("value") + std::to_string(n * 100 + m);
 
       batch.Put(key, value);

@@ -3,6 +3,8 @@
 #include "rocksdb/rocksdb_namespace.h"
 #include "hilbert/geometry.h"
 
+#include <string>
+
 namespace ROCKSDB_NAMESPACE {
 
 #pragma pack(push, 1)
@@ -68,6 +70,20 @@ struct HilbertCode {
     else if (bit < 128)
       upper_ &= ~((uint64_t)1 << (bit - 64));
   }
+
+  // Returns the code's string representation in big-endian so it gives the
+  // same compare result. Because of this, always use this instead of
+  // reinterpret_cast<const char*>(&hilbert_code)!
+  std::string ToString() const;
+
+  // Returns true if the string's length is exactly sizeof(uint64_t) * 2
+  static inline bool IsValidHilbertCodeString(const std::string& str) {
+    return str.size() == sizeof(uint64_t) * 2;
+  }
+
+  // The string should be a 16-byte string in big endian format
+  // Warning: will throw an error if IsValidHilbertCodeString() returns false on str
+  static HilbertCode FromString(const std::string& str);
 
  private:
   uint64_t upper_;
