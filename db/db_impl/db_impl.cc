@@ -7606,9 +7606,9 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
       if (UNLIKELY(!s->ok())) return {};
 
       std::unique_ptr<RandomAccessFileReader> ser_rafr = std::make_unique<RandomAccessFileReader>(std::move(ser_tree_file), ser_file_name);
-      SERTreeReader* ser_reader = nullptr;
+      std::unique_ptr<SERTreeReader> ser_reader;
 
-      *s = SERTreeReader::Open(std::move(ser_rafr), ser_reader);
+      *s = SERTreeReader::Open(std::move(ser_rafr), file_options_.io_options, &ser_reader);
       if (UNLIKELY(!s->ok())) return {};
 
       if (!rectangle.Intersects(ser_reader->MBR())) {
@@ -7616,8 +7616,10 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
         continue;
       }
 
-      std::vector<BlockHandle> blocks_to_seek_in = ser_reader->Find(rectangle);
-      delete ser_reader;
+      std::vector<BlockHandle> blocks_to_seek_in;
+      s = ser_reader->Find(rectangle, &blocks_to_seek_in);
+      if (UNLIKELY(!s->ok())) return {};
+      ser_reader.reset(); // no longer needed
 
       // 2.2. Read all blocks which can contain relevant data
       std::unique_ptr<FSRandomAccessFile> sst_file;

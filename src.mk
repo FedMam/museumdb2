@@ -348,6 +348,7 @@ LIB_SOURCES =                                                   \
   utilities/write_batch_with_index/write_batch_with_index_internal.cc    \
   hilbert/hilbert_curve.cc                                      \
   hilbert/ser_tree_builder.cc                                   \
+  hilbert/ser_tree_reader.cc                                    \
   table/hilbert/hilbert_table_builder.cc                        \
   table/hilbert/hilbert_table_factory.cc
 

@@ -4,13 +4,11 @@
 #include <vector>
 
 #include "hilbert/hilbert_curve.h"
+#include "hilbert/ser_tree_util.h"
 #include "file/writable_file_writer.h"
 #include "rocksdb/status.h"
-#include "table/format.h"
 
 namespace ROCKSDB_NAMESPACE {
-
-const uint64_t MUSEUMDB2_SER_TREE_FILE_MAGIC_NUMBER = 0x98e13db6c9118546ull; // obtained by `$ echo museumdb2.table.hilbert.SERTreeBuilder | sha256sum` and taking the trailing 8 bytes
 
 /*
 A SER-tree consists of nodes. Each node can either be a leaf node
@@ -19,18 +17,20 @@ A leaf node's children are blocks of the SSTable.
 
 SER-tree format:
 
-For each node:
+For each node, first header (see SERTreeNodeHeader):
 - 1 byte: 1 if it is a leaf node or 0 if it's a non-leaf node
 - sizeof(uint32_t): number of children
-- If this is a leaf node, for each child:
-  -- sizeof(BlockHandle): the BlockHandle of the original block in SST file
-  -- sizeof(UInt64Rectangle): MBR of the original block in SST file
-- Else if this is a non-leaf node, for each child:
-  -- sizeof(uint32_t): position (offset) of the child node in file
-  -- sizeof(UInt64Rectangle): MBR of the child node
 
-Footer:
-- sizeof(uint32_t): position (offset) of the root node in file
+Then, if this is a leaf node, for each child (see SERTreeLeafNodeChildRepr):
+- sizeof(BlockHandle): the BlockHandle of the original block in SST file
+- sizeof(UInt64Rectangle): MBR of the original block in SST file
+
+Else if this is a non-leaf node, for each child (see SERTreeNodeInfo):
+- sizeof(uint64_t): position (offset) of the child node in file
+- sizeof(UInt64Rectangle): MBR of the child node
+
+Footer (see SERTreeFooter):
+- sizeof(uint64_t): position (offset) of the root node in file
 - sizeof(UInt64Rectangle): MBR of the whole tree
 - sizeof(uint64_t): magic number
 */
@@ -72,31 +72,12 @@ class SERTreeBuilder {
 
   bool finished_ = false;
 
-  #pragma pack(push, 1)
-  struct SERTreeNodeHeader {
-    uint8_t is_leaf;
-    uint32_t num_children;
-  };
-
-  // offset: position of the node info in file
-  // also acts as a non-leaf node child representation in file
-  struct SERTreeNodeInfo {
-    uint32_t offset;
-    UInt64Rectangle mbr;
-  };
-
-  struct SERTreeLeafNodeChildRepr {
-    BlockHandle block_handle;
-    UInt64Rectangle mbr;
-  };
-  #pragma pack(pop)
-
   // this will be used in Finish() to build all the non-leaf nodes atop leaf nodes
   std::vector<SERTreeNodeInfo> leaf_nodes_;
 
   // the elements of Add() calls will be remembered in memory and after the
   // leaf_capacity_-th call, they will be written in file
-  uint32_t next_leaf_node_position_in_file_;
+  uint64_t next_leaf_node_position_in_file_;
   SERTreeNodeHeader next_leaf_node_header_{1, 0};
   UInt64Rectangle next_leaf_node_mbr_ = UInt64Rectangle::CreateInvalidRectangle();
   std::vector<SERTreeLeafNodeChildRepr> next_leaf_node_children_;

@@ -92,7 +92,7 @@ IOStatus SERTreeBuilder::Finish() {
       for (uint32_t i = 0; i < new_node_num_children; ++i)
         new_node_mbr = new_node_mbr.MBR(current_level_nodes[new_node_first_child + i].mbr);
 
-      SERTreeNodeInfo new_node_info{current_level_nodes[new_node_first_child].offset, new_node_mbr};
+      SERTreeNodeInfo new_node_info{file_->GetFileSize(), new_node_mbr};
       next_level_nodes.push_back(new_node_info);
 
       SERTreeNodeHeader new_node_header{0, new_node_num_children};
@@ -110,11 +110,13 @@ IOStatus SERTreeBuilder::Finish() {
   assert(current_level_nodes.size() == 1);
 
   // footer
+  SERTreeFooter footer;
+  footer.root_offset = current_level_nodes[0].offset;
+  footer.mbr = current_level_nodes[0].mbr;
+  footer.magic_number = MUSEUMDB2_SER_TREE_FILE_MAGIC_NUMBER;
+
   status_ = file_->Append(opts_,
-    Slice(reinterpret_cast<const char*>(&current_level_nodes[0]), sizeof(SERTreeNodeInfo)));
-  if (UNLIKELY(!ok())) { return status_; }
-  status_ = file_->Append(opts_,
-    Slice(reinterpret_cast<const char*>(&MUSEUMDB2_SER_TREE_FILE_MAGIC_NUMBER), sizeof(uint64_t)));
+    Slice(reinterpret_cast<const char*>(&footer), sizeof(SERTreeFooter)));
   if (UNLIKELY(!ok())) { return status_; }
 
   finished_ = true;

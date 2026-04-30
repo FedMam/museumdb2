@@ -7,6 +7,9 @@
 
 namespace ROCKSDB_NAMESPACE {
 
+// these structures will be written to and read from files
+#pragma pack(push, 1)
+
 struct UInt64Point {
  public:
   UInt64Point(uint64_t x, uint64_t y)
@@ -85,6 +88,8 @@ struct UInt64Rectangle {
   uint64_t right_;
   uint64_t bottom_;
 };
+
+#pragma pack(pop)
 
 } // namespace ROCKSDB_NAMESPACE
 
