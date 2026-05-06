@@ -14,8 +14,8 @@ Status SERTreeReader::Open(
     std::unique_ptr<RandomAccessFileReader> ser_tree_file,
     const IOOptions& io_options,
     std::unique_ptr<SERTreeReader>* ser_tree_reader) {
-  std::unique_ptr<SERTreeReader> reader = std::make_unique<SERTreeReader>(
-    std::move(ser_tree_file), io_options);
+  std::unique_ptr<SERTreeReader> reader(new SERTreeReader(
+    std::move(ser_tree_file), io_options));
 
   Status s = reader->file_->file()->GetFileSize(&reader->file_size_);
   if (UNLIKELY(!s.ok())) return s;
@@ -47,7 +47,12 @@ Status SERTreeReader::Open(
 }
 
 Status SERTreeReader::Find(const UInt64Rectangle& rectangle, std::vector<BlockHandle>* result) {
-
+  std::vector<BlockHandle> result_vec;
+  Status s = FindRec_(footer_.root_offset, rectangle, result_vec);
+  if (UNLIKELY(!s.ok()))
+    return s;
+  *result = result_vec;
+  return Status::OK();
 }
 
 Status SERTreeReader::FindRec_(uint64_t node_offset, const UInt64Rectangle& rectangle, std::vector<BlockHandle>& result) {

@@ -88,6 +88,13 @@ IOStatus SERTreeBuilder::Finish() {
     for (uint32_t new_node_first_child = 0; new_node_first_child < current_level_nodes.size(); new_node_first_child += non_leaf_capacity_) {
       uint32_t new_node_num_children = std::min(non_leaf_capacity_, (uint32_t)current_level_nodes.size() - new_node_first_child);
 
+      if (new_node_num_children == 1) {
+        // it's pointless to make a node with exactly 1 child;
+        // we'll use the child directly instead
+        next_level_nodes.push_back(current_level_nodes[new_node_first_child]);
+        continue;
+      }
+
       UInt64Rectangle new_node_mbr = UInt64Rectangle::CreateInvalidRectangle();
       for (uint32_t i = 0; i < new_node_num_children; ++i)
         new_node_mbr = new_node_mbr.MBR(current_level_nodes[new_node_first_child + i].mbr);

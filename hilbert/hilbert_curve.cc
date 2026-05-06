@@ -106,12 +106,6 @@ inline int RotateFlipSubQuadrant(int sub_quadrant, bool flip, Rotation rot) {
 }
 
 inline int ReverseRotateFlipSubQuadrant(int sub_quadrant, bool flip, Rotation rot) {
-  // Flips and rotates the following U-shape:
-  // 03
-  // 12
-  // and returns the sub-quadrant of the rotated shape that is in place of sub_quadrant of the original shape
-  // (see below for details)
-
   if (flip) sub_quadrant = 3 - sub_quadrant;
   switch (rot) {
     case k0:   break;
@@ -156,8 +150,8 @@ HilbertCode PointToHilbertCode(const UInt64Point& point) {
     Rotation next_rotation;
     bool next_flip;
     int point_bits =
-      ((point.GetX() & (1 << current_bit)) != 0 ? 0b10 : 0b00) +
-      ((point.GetY() & (1 << current_bit)) != 0 ? 0b01 : 0b00);
+      ((point.GetX() & ((uint64_t)1 << current_bit)) != 0 ? 0b10 : 0b00) +
+      ((point.GetY() & ((uint64_t)1 << current_bit)) != 0 ? 0b01 : 0b00);
     
     int sub_quadrant = 0;
     if (point_bits == 0b10)
@@ -245,14 +239,14 @@ UInt64Point HilbertCodeToPoint(const HilbertCode& hilbertCode) {
       case 0:
         break;
       case 1:
-        y |= (1 << current_bit);
+        y |= ((uint64_t)1 << current_bit);
         break;
       case 2:
-        x |= (1 << current_bit);
-        y |= (1 << current_bit);
+        x |= ((uint64_t)1 << current_bit);
+        y |= ((uint64_t)1 << current_bit);
         break;
       case 3:
-        x |= (1 << current_bit);
+        x |= ((uint64_t)1 << current_bit);
         break;
     }
 

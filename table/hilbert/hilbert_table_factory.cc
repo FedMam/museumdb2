@@ -30,7 +30,10 @@ TableBuilder* HilbertTableFactory::NewTableBuilder(
     table_builder_options,
     file,
     std::move(ser_writer),
-    file_options_.io_options);
+    file_options_.io_options,
+    env_,
+    builder_leaf_capacity_,
+    builder_non_leaf_capacity_);
 }
 
 } // namespace ROCKSDB_NAMESPACE

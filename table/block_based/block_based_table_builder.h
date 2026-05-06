@@ -122,15 +122,6 @@ class BlockBasedTableBuilder : public TableBuilder {
   void TEST_InjectIOError();
 #endif  // !NDEBUG
 
-  // === spatial data support ===
-  friend class HilbertTableBuilder;
- 
- private:
-  const BlockHandle& PendingHandle() const;
-
-  const std::string& LastInternalKey() const;
-  // ============================
-
  private:
   bool ok() const;
 
@@ -225,6 +216,29 @@ class BlockBasedTableBuilder : public TableBuilder {
 
   // Stop worker threads for parallel compression
   void StopParallelCompression(bool abort);
+
+  // === spatial data support ===
+  friend class HilbertTableBuilder;
+
+  // these are some functions exclusively for the HilbertTableBuilder class
+
+  const BlockHandle& PendingHandle() const;
+
+  const std::string& LastInternalKey() const;
+
+  bool IsParallelCompressionActive() const;
+
+  virtual void NotifyOnPreparingIndexEntry(void* index_entry_pointer) { 
+    (void)index_entry_pointer;
+  }
+  
+  virtual void NotifyOnFinishingIndexEntry(const BlockHandle& pending_handle,
+                                           void* index_entry_pointer) {
+    (void)pending_handle;
+    (void)index_entry_pointer;
+  }
+
+  // ============================
 };
 
 }  // namespace ROCKSDB_NAMESPACE

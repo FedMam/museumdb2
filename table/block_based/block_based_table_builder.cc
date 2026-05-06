@@ -1777,6 +1777,11 @@ void BlockBasedTableBuilder::EmitBlockForParallel(
   r->index_builder->PrepareIndexEntry(last_key_in_current_block,
                                       first_key_in_next_block,
                                       block_rep->prepared_index_entry.get());
+
+  // === spatial data support ===
+  NotifyOnPreparingIndexEntry((void*)block_rep->prepared_index_entry.get());
+  // ============================
+
   block_rep->compressed.Reset();
   block_rep->compression_type = kNoCompression;
 
@@ -1927,6 +1932,11 @@ void BlockBasedTableBuilder::BGWorker(WorkingAreaPair& working_area) {
         rep_->index_builder->FinishIndexEntry(
             rep_->pending_handle, block_rep->prepared_index_entry.get(),
             skip_delta_encoding);
+        
+        // === spatial data support ===
+        NotifyOnFinishingIndexEntry(rep_->pending_handle,
+          (void*)block_rep->prepared_index_entry.get());
+        // ============================
       }
     };
     switch (thread_state) {
@@ -3067,6 +3077,10 @@ const BlockHandle& BlockBasedTableBuilder::PendingHandle() const {
 
 const std::string& BlockBasedTableBuilder::LastInternalKey() const {
   return rep_->last_ikey;
+}
+
+bool BlockBasedTableBuilder::IsParallelCompressionActive() const {
+  return rep_->IsParallelCompressionActive();
 }
 // ============================
 

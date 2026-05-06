@@ -3428,7 +3428,7 @@ class DBImpl : public DB {
       ColumnFamilyHandle* column_family,
       const UInt64Rectangle& rectangle,
       Status* s) override {
-    return RectangularRangeQueryImpl(read_options, column_family, rectangle, result);
+    return RectangularRangeQueryImpl(read_options, column_family, rectangle, s);
   }
 
   std::vector<std::pair<UInt64Point, std::string>> RectangularRangeQueryImpl(

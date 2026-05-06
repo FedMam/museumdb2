@@ -36,7 +36,6 @@ Footer (see SERTreeFooter):
 */
 class SERTreeBuilder {
  public:
-  // TODO (FedMam): implement customizability for capacities
   SERTreeBuilder(std::unique_ptr<WritableFileWriter> ser_tree_file,
                  const IOOptions& opts,
                  Env* env = Env::Default(),

@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 #include <algorithm>
+#include <functional>
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -17,6 +18,13 @@ struct UInt64Point {
 
   inline uint64_t GetX() const { return x_; }
   inline uint64_t GetY() const { return y_; }
+
+  inline bool operator==(const UInt64Point& other) const {
+    return x_ == other.x_ && y_ == other.y_;
+  }
+  inline bool operator!=(const UInt64Point& other) const {
+    return x_ != other.x_ || y_ != other.y_;
+  }
 
  private:
   uint64_t x_;
@@ -35,6 +43,14 @@ struct UInt64Rectangle {
   
   UInt64Rectangle(UInt64Point leftTop, UInt64Point rightBottom)
     : left_(leftTop.GetX()), top_(leftTop.GetY()), right_(rightBottom.GetX()), bottom_(rightBottom.GetY()) { }
+
+  // Note: the default constructor of UInt64Rectangle creates an invalid rectangle
+  UInt64Rectangle()
+    : UInt64Rectangle(1, 1, 0, 0) { }
+
+  static inline UInt64Rectangle CreateInvalidRectangle() {
+    return UInt64Rectangle();
+  }
 
   inline uint64_t GetLeft() const { return left_; }
   inline uint64_t GetTop() const { return top_; }
@@ -76,10 +92,6 @@ struct UInt64Rectangle {
       std::min(top_, other.top_),
       std::max(right_, other.right_),
       std::max(bottom_, other.bottom_));
-  }
-
-  static inline UInt64Rectangle CreateInvalidRectangle() {
-    return UInt64Rectangle(1, 1, 0, 0);
   }
 
  private:

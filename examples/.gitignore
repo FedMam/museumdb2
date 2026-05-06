@@ -10,4 +10,6 @@ simple_example
 transaction_example
 
 # TODO(FedMam): remove
-TEST_*
+TEST_hilbert
+TEST_hilbert_minimal
+TEST_hilbert_comprehensive

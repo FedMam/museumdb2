@@ -22,21 +22,18 @@ struct SERTreeNodeHeader {
 // also acts as a non-leaf node child representation in file
 struct SERTreeNodeInfo {
   uint64_t offset;
-  UInt64Rectangle mbr;
+  UInt64Rectangle mbr = UInt64Rectangle::CreateInvalidRectangle();
 };
 
 // Only used by SERTreeBuilder and SERTreeReader internally
 struct SERTreeLeafNodeChildRepr {
   BlockHandle block_handle;
-  UInt64Rectangle mbr;
+  UInt64Rectangle mbr = UInt64Rectangle::CreateInvalidRectangle();
 };
 
 struct SERTreeFooter {
-  SERTreeFooter()
-    : mbr(UInt64Rectangle::CreateInvalidRectangle()) { }
-
   uint64_t root_offset;
-  UInt64Rectangle mbr;
+  UInt64Rectangle mbr = UInt64Rectangle::CreateInvalidRectangle();
   uint64_t magic_number;
 };
 #pragma pack(pop)

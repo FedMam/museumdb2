@@ -2231,7 +2231,14 @@ class DB {
       const ReadOptions& read_options,
       ColumnFamilyHandle* column_family,
       const UInt64Rectangle& rectangle,
-      Status* s) = 0;
+      Status* s) {
+    (void)read_options;
+    (void)column_family;
+    (void)rectangle;
+    (void)s;
+    *s = Status::NotSupported("RectangularRangeQuery not implemented");
+    return {};
+  }
 
   // ============================
 };

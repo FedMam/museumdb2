@@ -36,9 +36,9 @@ using ROCKSDB_NAMESPACE::BlockBasedTableOptions;
 using ROCKSDB_NAMESPACE::HilbertTableFactory;
 
 #if defined(OS_WIN)
-std::string kDBPath = "C:\\Windows\\TEMP\\rocksdb_TEST_hilbert";
+std::string kDBPath = "C:\\Windows\\TEMP\\rocksdb_TEST_hilbert_minimal";
 #else
-std::string kDBPath = "/tmp/rocksdb_TEST_hilbert";
+std::string kDBPath = "/tmp/rocksdb_TEST_hilbert_minimal";
 #endif
 
 int main() {
@@ -64,9 +64,9 @@ int main() {
 
   UInt64Rectangle mbr;
 
-  const uint64_t EXPECTED_RESULT_NUMBER = 0x20000 * 0x80;
+  const uint64_t EXPECTED_RESULT_NUMBER = 0x200 * 0x80;
 
-  for (int n = 0; n < 0x20000; ++n) {
+  for (int n = 0; n < 0x200; ++n) {
     WriteBatch batch;
     for (int m = 0; m < 0x80; ++m) {
       HilbertCode code(0, 0x10000 + n * 0x80 + m);

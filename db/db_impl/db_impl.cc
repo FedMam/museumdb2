@@ -122,6 +122,7 @@
 
 #include "table/block_fetcher.h"
 #include "table/block_based/block.h"
+#include "rocksdb/sst_file_reader.h"
 
 #include "hilbert/hilbert_curve.h"
 #include "hilbert/util.h"
@@ -7543,138 +7544,236 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
 
   ImmutableOptions immutable_options(immutable_db_options_,
                                      cf_desc.options);
+  auto current_seqno = read_options.snapshot != nullptr
+    ? read_options.snapshot->GetSequenceNumber()
+    : GetLatestSequenceNumber();
 
   // point -> (entry, last_seqno)
   std::unordered_map<UInt64Point, std::pair<std::string, uint64_t>> result_acc;
 
-  ColumnFamilyMetaData cf_meta;
-  GetColumnFamilyMetaData(column_family, &cf_meta);
-
   SuperVersion* sv = GetAndRefSuperVersion(column_family->GetID());
   Arena arena;
+
+  ColumnFamilyMetaData cf_meta;
+  sv->current->GetColumnFamilyMetaData(&cf_meta);
+
+  ColumnFamilyData* cf_data = static_cast_with_check<ColumnFamilyHandleImpl>(column_family)->cfd();
+
+  // This iterator serves no purpose and is there just to
+  // prevent modification of files during query execution
+  auto pin_iter = NewInternalIterator(
+    read_options, cf_data, sv, &arena, current_seqno, /*allow_unprepared_value=*/false);
+
 
   // 1. Look in the memtables
   // TODO (FedMam): is there a more efficient way than to iterate through the whole memtable?
   {
-  std::unique_ptr<InternalIterator> mem_iter(sv->mem->NewIterator(
+
+  MergeIteratorBuilder merge_iter_builder(
+    &cf_data->internal_comparator(),
+    &arena);
+  
+  InternalIterator* mem_iter(sv->mem->NewIterator(
     read_options,
     sv->GetSeqnoToTimeMapping(),
     &arena,
     /*prefix_extractor=*/nullptr,
     /*for_flush=*/false));
-  for (mem_iter->SeekToFirst(); mem_iter->Valid(); mem_iter->Next()) {
-    auto seqno = GetInternalKeySeqno(mem_iter->key());
-    if (seqno > read_options.snapshot->GetSequenceNumber())
+
+  merge_iter_builder.AddIterator(mem_iter);
+
+  sv->imm->AddIterators(
+    read_options,
+    sv->GetSeqnoToTimeMapping(),
+    /*prefix_extractor=*/nullptr,
+    &merge_iter_builder,
+    /*add_range_tombstone_iter=*/false);
+
+  auto merge_iter = merge_iter_builder.Finish();
+
+  for (merge_iter->SeekToFirst(); merge_iter->Valid(); merge_iter->Next()) {
+    auto seqno = GetInternalKeySeqno(merge_iter->key());
+    if (seqno > current_seqno)
       continue;
 
+    auto vt = ExtractValueType(merge_iter->key());
+    // TODO (FedMam): merge?
+    if (vt != ValueType::kTypeValue)
+      continue;
+    
     HilbertCode code;
-    if (!TryParseHilbertCode(mem_iter->key(), &code)) {
+    if (UNLIKELY(!TryParseHilbertCode(merge_iter->key(), &code))) {
       *s = Status::InvalidArgument("DBImpl::RectangularRangeQueryImpl(): MemTable contains an entry with invalid key (could not extract Hilbert code out of it)");
       ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
       return {};
     }
-
+    
     UInt64Point point = HilbertCodeToPoint(code);
     if (rectangle.Contains(point)) {
-      result_acc[point] = {mem_iter->value().ToString(), seqno};
+      if (result_acc.find(point) == result_acc.end() ||
+          result_acc[point].second < seqno) {
+        result_acc[point] = {merge_iter->value().ToString(), seqno};
+      }
     }
   }
-  
-  } // destroy mem_iter
 
-  ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
+  }
 
   // 2. Look in the SSTables
   std::vector<std::string> ser_tree_files_to_seek_in;
+
   for (const auto& level: cf_meta.levels) {
     for (const auto& file: level.files) {
-      std::string sst_file_name = file.name;
+      std::string sst_file_name = GetName() + file.name;
       std::string ser_file_name = GetSERTreeFileName(sst_file_name);
 
-      Status es = env_->FileExists(ser_file_name);
-      if (!es.ok()) {
-        // TODO (FedMam): in the future, maybe add full iteration of SST files without SER files
-        // For now, just fail
-        *s = es;
-        return {};
-      }
-
-      // 2.1. Look into the SER tree file
-      std::unique_ptr<FSRandomAccessFile> ser_tree_file;
-      *s = env_->GetFileSystem()->NewRandomAccessFile(ser_file_name, file_options_, &ser_tree_file, nullptr);
-
-      if (UNLIKELY(!s->ok())) return {};
-
-      std::unique_ptr<RandomAccessFileReader> ser_rafr = std::make_unique<RandomAccessFileReader>(std::move(ser_tree_file), ser_file_name);
-      std::unique_ptr<SERTreeReader> ser_reader;
-
-      *s = SERTreeReader::Open(std::move(ser_rafr), file_options_.io_options, &ser_reader);
-      if (UNLIKELY(!s->ok())) return {};
-
-      if (!rectangle.Intersects(ser_reader->MBR())) {
-        // the SST file contains no entries inside rectangle
+      // DEBUG
+      /*Status sst_es = env_->FileExists(sst_file_name);
+      if (!sst_es.ok()) {
+        printf("skipped %s\n", sst_file_name.c_str());
+        fflush(stdout);
         continue;
-      }
+      }*/
 
-      std::vector<BlockHandle> blocks_to_seek_in;
-      s = ser_reader->Find(rectangle, &blocks_to_seek_in);
-      if (UNLIKELY(!s->ok())) return {};
-      ser_reader.reset(); // no longer needed
+      Status es = env_->FileExists(ser_file_name);
+      if (es.ok()) {
+        // SER-tree file found
 
-      // 2.2. Read all blocks which can contain relevant data
-      std::unique_ptr<FSRandomAccessFile> sst_file;
-      uint64_t sst_file_size;
-      *s = env_->GetFileSystem()->NewRandomAccessFile(sst_file_name, file_options_, &sst_file, nullptr);
-      if (LIKELY(s->ok()))
-        *s = sst_file->GetFileSize(&sst_file_size);
+        // 2.1. Look into the SER tree file
+        std::unique_ptr<FSRandomAccessFile> ser_tree_file;
+        *s = env_->GetFileSystem()->NewRandomAccessFile(ser_file_name, file_options_, &ser_tree_file, nullptr);
 
-      if (UNLIKELY(!s->ok())) return {};
+        if (UNLIKELY(!s->ok())) {
+          ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
+          return {};
+        }
 
-      std::unique_ptr<RandomAccessFileReader> sst_rafr = std::make_unique<RandomAccessFileReader>(std::move(sst_file), sst_file_name);
+        std::unique_ptr<RandomAccessFileReader> ser_rafr = std::make_unique<RandomAccessFileReader>(std::move(ser_tree_file), ser_file_name);
+        std::unique_ptr<SERTreeReader> ser_reader;
 
-      Footer footer;
-      *s = ReadFooterFromFile(file_options_.io_options,
-        sst_rafr.get(),
-        *env_->GetFileSystem(),
-        /*prefetch_buffer=*/nullptr,
-        sst_file_size,
-        &footer);
-      
-      for (const auto& block_handle: blocks_to_seek_in) {
-        PersistentCacheOptions cache_options;
-        BlockContents contents;
-        BlockFetcher fetcher(sst_rafr.get(),
+        *s = SERTreeReader::Open(std::move(ser_rafr), file_options_.io_options, &ser_reader);
+        if (UNLIKELY(!s->ok())) {
+          ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
+          return {};
+        }
+
+        if (!rectangle.Intersects(ser_reader->MBR())) {
+          // the SST file contains no entries inside rectangle
+          continue;
+        }
+
+        std::vector<BlockHandle> blocks_to_seek_in;
+        *s = ser_reader->Find(rectangle, &blocks_to_seek_in);
+        if (UNLIKELY(!s->ok())) {
+          ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
+          return {};
+        }
+
+        ser_reader.reset(); // no longer needed
+
+        // 2.2. Read all blocks which can contain relevant data
+        std::unique_ptr<FSRandomAccessFile> sst_file;
+        uint64_t sst_file_size;
+        *s = env_->GetFileSystem()->NewRandomAccessFile(sst_file_name, file_options_, &sst_file, nullptr);
+        if (LIKELY(s->ok()))
+          *s = sst_file->GetFileSize(&sst_file_size);
+
+        if (UNLIKELY(!s->ok())) {
+          ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
+          return {};
+        }
+
+        std::unique_ptr<RandomAccessFileReader> sst_rafr = std::make_unique<RandomAccessFileReader>(std::move(sst_file), sst_file_name);
+
+        Footer footer;
+        *s = ReadFooterFromFile(file_options_.io_options,
+          sst_rafr.get(),
+          *env_->GetFileSystem(),
           /*prefetch_buffer=*/nullptr,
-          footer,
-          read_options,
-          block_handle,
-          &contents,
-          immutable_options,
-          /*do_uncompress=*/true,
-          /*maybe_compressed=*/true,
-          BlockType::kData,
-          /*decompressor=*/nullptr,
-          cache_options);
-
-        *s = fetcher.ReadBlockContents();
-        if (UNLIKELY(!s->ok())) return {};
-
-        Block block(std::move(contents));
-        std::unique_ptr<InternalIterator> block_iter(
-          block.NewDataIterator(cf_desc.options.comparator,
-            read_options.snapshot->GetSequenceNumber(),
-            /*iter=*/nullptr,
-            /*stats=*/nullptr,
-            /*block_contents_pinned=*/true));
+          sst_file_size,
+          &footer);
         
-        for (block_iter->SeekToFirst(); block_iter->Valid(); block_iter->Next()) {
-          auto seqno = GetInternalKeySeqno(block_iter->key());
-          if (seqno > read_options.snapshot->GetSequenceNumber())
+        for (const auto& block_handle: blocks_to_seek_in) {
+          PersistentCacheOptions cache_options;
+          BlockContents contents;
+          BlockFetcher fetcher(sst_rafr.get(),
+            /*prefetch_buffer=*/nullptr,
+            footer,
+            read_options,
+            block_handle,
+            &contents,
+            immutable_options,
+            /*do_uncompress=*/true,
+            /*maybe_compressed=*/true,
+            BlockType::kData,
+            /*decompressor=*/nullptr,
+            cache_options);
+
+          *s = fetcher.ReadBlockContents();
+          if (UNLIKELY(!s->ok())) {
+            ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
+            return {};
+          }
+          
+          Block block(std::move(contents));
+          std::unique_ptr<InternalIterator> block_iter(
+            block.NewDataIterator(cf_desc.options.comparator,
+              current_seqno,
+              /*iter=*/nullptr,
+              /*stats=*/nullptr,
+              /*block_contents_pinned=*/true));
+          
+          for (block_iter->SeekToFirst(); block_iter->Valid(); block_iter->Next()) {
+            auto seqno = GetInternalKeySeqno(block_iter->key());
+            if (seqno > current_seqno)
+              continue;
+
+            auto vt = ExtractValueType(block_iter->key());
+            // TODO (FedMam): merge?
+            if (vt != ValueType::kTypeValue)
+              continue;
+
+            HilbertCode code;
+            if (UNLIKELY(!TryParseHilbertCode(block_iter->key(), &code))) {
+              *s = Status::InvalidArgument("DBImpl::RectangularRangeQueryImpl(): MemTable contains an entry with invalid key (could not extract Hilbert code out of it)");
+              ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
+              return {};
+            }
+
+            UInt64Point point = HilbertCodeToPoint(code);
+            if (rectangle.Contains(point)) {
+              if (result_acc.find(point) == result_acc.end() ||
+                  result_acc[point].second < seqno) {
+                result_acc[point] = {block_iter->value().ToString(), seqno};
+              }
+            }
+          }
+        }
+      } else {
+        // SER-tree file not found; iterate through the whole SST file
+        SstFileReader reader(GetOptions(column_family));
+        *s = reader.Open(sst_file_name);
+        if (UNLIKELY(!s->ok())) {
+          ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
+          return {};
+        }
+
+        std::unique_ptr<rocksdb::Iterator> sst_iter(reader.NewTableIterator());
+
+        for (sst_iter->SeekToFirst(); sst_iter->Valid(); sst_iter->Next()) {
+          auto seqno = GetInternalKeySeqno(sst_iter->key());
+          if (seqno > current_seqno)
+            continue;
+
+          auto vt = ExtractValueType(sst_iter->key());
+          // TODO (FedMam): merge?
+          if (vt != ValueType::kTypeValue)
             continue;
 
           HilbertCode code;
-          if (UNLIKELY(!TryParseHilbertCode(block_iter->key(), &code))) {
+          if (UNLIKELY(!TryParseHilbertCode(sst_iter->key(), &code))) {
             *s = Status::InvalidArgument("DBImpl::RectangularRangeQueryImpl(): MemTable contains an entry with invalid key (could not extract Hilbert code out of it)");
+            ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
             return {};
           }
 
@@ -7682,7 +7781,7 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
           if (rectangle.Contains(point)) {
             if (result_acc.find(point) == result_acc.end() ||
                 result_acc[point].second < seqno) {
-              result_acc[point] = {block_iter->value().ToString(), seqno};
+              result_acc[point] = {sst_iter->value().ToString(), seqno};
             }
           }
         }
@@ -7694,6 +7793,11 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
   for (const auto& entry: result_acc) {
     result_vector.emplace_back(entry.first, entry.second.first);
   }
+
+  ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
+  
+  *s = pin_iter->status();
+
   return result_vector;
 }
 

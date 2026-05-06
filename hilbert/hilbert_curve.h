@@ -51,17 +51,17 @@ struct HilbertCode {
 
   inline bool IsBitSetAt(size_t bit) const {
     if (bit < 64)
-      return (lower_ & (1 << bit)) != 0;
+      return (lower_ & ((uint64_t)1 << bit)) != 0;
     else if (bit < 128)
-      return (upper_ & (1 << (bit - 64))) != 0;
+      return (upper_ & ((uint64_t)1 << (bit - 64))) != 0;
     return 0;
   }
 
   inline void SetBitAt(size_t bit) {
     if (bit < 64)
-      lower_ |= (1 << bit);
+      lower_ |= ((uint64_t)1 << bit);
     else if (bit < 128)
-      upper_ |= (1 << (bit - 64));
+      upper_ |= ((uint64_t)1 << (bit - 64));
   }
 
   inline void UnsetBitAt(size_t bit) {

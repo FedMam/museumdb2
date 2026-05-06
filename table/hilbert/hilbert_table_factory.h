@@ -14,11 +14,15 @@ class HilbertTableFactory : public BlockBasedTableFactory {
     const BlockBasedTableOptions& table_options,
     const EnvOptions& env_options = EnvOptions(),
     const FileOptions& file_options = FileOptions(),
-    Env* env = Env::Default())
+    Env* env = Env::Default(),
+    uint32_t builder_leaf_capacity = 4,
+    uint32_t builder_non_leaf_capacity = 4)
     : BlockBasedTableFactory(table_options),
       env_(env),
       env_options_(env_options),
-      file_options_(file_options) { }
+      file_options_(file_options),
+      builder_leaf_capacity_(builder_leaf_capacity),
+      builder_non_leaf_capacity_(builder_non_leaf_capacity) { }
 
   static const char* kClassName() { return kHilbertTableName(); }
   const char* Name() const override { return kHilbertTableName(); }
@@ -40,6 +44,10 @@ class HilbertTableFactory : public BlockBasedTableFactory {
   Env* env_;
   EnvOptions env_options_;
   FileOptions file_options_;
+
+  // builder options
+  uint32_t builder_leaf_capacity_;
+  uint32_t builder_non_leaf_capacity_;
 };
 
 } // namespace ROCKSDB_NAMESPACE
