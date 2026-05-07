@@ -7549,8 +7549,6 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
     : GetLatestSequenceNumber();
 
   // point -> (entry, last_seqno)
-  std::unordered_map<UInt64Point, std::pair<std::string, uint64_t>> result_acc;
-
   SuperVersion* sv = GetAndRefSuperVersion(column_family->GetID());
   Arena arena;
 
@@ -7559,14 +7557,9 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
 
   ColumnFamilyData* cf_data = static_cast_with_check<ColumnFamilyHandleImpl>(column_family)->cfd();
 
-  // This iterator serves no purpose and is there just to
-  // prevent modification of files during query execution
-  auto pin_iter = NewInternalIterator(
-    read_options, cf_data, sv, &arena, current_seqno, /*allow_unprepared_value=*/false);
-
-
   // 1. Look in the memtables
   // TODO (FedMam): is there a more efficient way than to iterate through the whole memtable?
+  std::unordered_map<UInt64Point, std::pair<std::string, uint64_t>> result_memtable;
   {
 
   MergeIteratorBuilder merge_iter_builder(
@@ -7609,10 +7602,16 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
     }
     
     UInt64Point point = HilbertCodeToPoint(code);
+
+    // DEBUG
+    if (point.GetX() == 17864 && point.GetY() == 16388) {
+      printf("~ %s %lu memtable\n", merge_iter->value().ToString().c_str(), seqno);
+    }
+
     if (rectangle.Contains(point)) {
-      if (result_acc.find(point) == result_acc.end() ||
-          result_acc[point].second < seqno) {
-        result_acc[point] = {merge_iter->value().ToString(), seqno};
+      if (result_memtable.find(point) == result_memtable.end() ||
+          result_memtable[point].second < seqno) {
+        result_memtable[point] = {merge_iter->value().ToString(), seqno};
       }
     }
   }
@@ -7620,12 +7619,16 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
   }
 
   // 2. Look in the SSTables
-  std::vector<std::string> ser_tree_files_to_seek_in;
+  std::unordered_map<UInt64Point, std::pair<std::string, uint64_t>> result_sstable;
 
   for (const auto& level: cf_meta.levels) {
     for (const auto& file: level.files) {
       std::string sst_file_name = GetName() + file.name;
       std::string ser_file_name = GetSERTreeFileName(sst_file_name);
+
+      // DEBUG
+      // printf("~ %s\n", sst_file_name.c_str());
+      // fflush(stdout);
 
       // DEBUG
       /*Status sst_es = env_->FileExists(sst_file_name);
@@ -7741,10 +7744,16 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
             }
 
             UInt64Point point = HilbertCodeToPoint(code);
+
+            // DEBUG
+            if (point.GetX() == 17864 && point.GetY() == 16388) {
+              printf("~ %s %lu block %s\n", block_iter->value().ToString().c_str(), seqno, ser_file_name.c_str());
+            }
+
             if (rectangle.Contains(point)) {
-              if (result_acc.find(point) == result_acc.end() ||
-                  result_acc[point].second < seqno) {
-                result_acc[point] = {block_iter->value().ToString(), seqno};
+              if (result_sstable.find(point) == result_sstable.end() ||
+                  result_sstable[point].second < seqno) {
+                result_sstable[point] = {block_iter->value().ToString(), seqno};
               }
             }
           }
@@ -7778,10 +7787,16 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
           }
 
           UInt64Point point = HilbertCodeToPoint(code);
+
+          // DEBUG
+          if (point.GetX() == 17864 && point.GetY() == 16388) {
+            printf("~ %s %lu sst %s\n", sst_iter->value().ToString().c_str(), seqno, sst_file_name.c_str());
+          }
+
           if (rectangle.Contains(point)) {
-            if (result_acc.find(point) == result_acc.end() ||
-                result_acc[point].second < seqno) {
-              result_acc[point] = {sst_iter->value().ToString(), seqno};
+            if (result_sstable.find(point) == result_sstable.end() ||
+                result_sstable[point].second < seqno) {
+              result_sstable[point] = {sst_iter->value().ToString(), seqno};
             }
           }
         }
@@ -7789,14 +7804,19 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
     }
   }
 
+  // results from memtable override results from sstables
+  for (const auto& entry: result_memtable) {
+    result_sstable[entry.first] = entry.second;
+  }
+
   std::vector<std::pair<UInt64Point, std::string>> result_vector;
-  for (const auto& entry: result_acc) {
+  for (const auto& entry: result_sstable) {
     result_vector.emplace_back(entry.first, entry.second.first);
   }
 
   ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
   
-  *s = pin_iter->status();
+  *s = Status::OK();
 
   return result_vector;
 }

@@ -9,6 +9,10 @@ namespace ROCKSDB_NAMESPACE {
 
 std::string HilbertCode::ToString() const {
   uint8_t bytes[sizeof(uint64_t) * 2];
+  for (unsigned i = 0; i < sizeof(uint64_t) * 2; ++i) {
+    bytes[i] = 0x00;
+  }
+
   for (unsigned i = 0; i < sizeof(uint64_t); ++i) {
     unsigned byte_offset = 8 * (sizeof(uint64_t) - i - 1);
     bytes[i] = (upper_ & ((uint64_t)0xff << byte_offset)) >> byte_offset;
