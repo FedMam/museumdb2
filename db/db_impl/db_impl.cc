@@ -7521,6 +7521,51 @@ void DBImpl::TrackOrUntrackFiles(
 
 // === spatial data support ===
 
+// helper functions for DBImpl::RectangularRangeQueryImpl
+namespace {
+
+// result_acc is needed so that we can skip keys that were found
+// at a previous level and thus already recorded in result_acc
+template<typename TIterator>
+Status RectangularRangeQuery_CollectDataFromIterator(
+    TIterator* iter,
+    const UInt64Rectangle& rectangle,
+    const SequenceNumber& current_seqno,
+    std::unordered_map<UInt64Point, std::tuple<uint64_t, ValueType, std::string>>& acc,
+    const std::unordered_map<UInt64Point, std::pair<ValueType, std::string>>& result_acc) {
+  for (iter->SeekToFirst(); iter->Valid(); iter->Next()) {
+    auto seqno = GetInternalKeySeqno(iter->key());
+    if (seqno > current_seqno)
+      continue;
+
+    auto vt = ExtractValueType(iter->key());
+    if (vt >= kTypeMerge && vt != kTypeSingleDeletion)
+      return Status::NotSupported(std::string("DBImpl::RectangularRangeQuery(): not supported value type ") + std::to_string(vt));
+    
+    HilbertCode code;
+    if (UNLIKELY(!TryParseHilbertCode(iter->key(), &code)))
+      return Status::InvalidArgument("DBImpl::RectangularRangeQueryImpl(): MemTable contains an entry with invalid key (could not extract Hilbert code out of it)");
+    
+    UInt64Point point = HilbertCodeToPoint(code);
+
+    if (!rectangle.Contains(point))
+      continue;
+
+    if (result_acc.find(point) != result_acc.end())
+      continue;
+
+    if (acc.find(point) == acc.end() || std::get<0>(acc[point]) < seqno) {
+      // if (std::get<0>(acc[point]) == seqno && acc_point != candidate)
+      //   return Status::InvalidArgument("DBImpl::RectangularRangeQueryImpl(): found two different entries with the same seqno");
+
+      acc[point] = {seqno, vt, iter->value().ToString()};
+    }
+  }
+  return Status::OK();
+}
+
+}
+
 std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryImpl(
     const ReadOptions& read_options,
     ColumnFamilyHandle* column_family,
@@ -7559,8 +7604,12 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
 
   // 1. Look in the memtables
   // TODO (FedMam): is there a more efficient way than to iterate through the whole memtable?
-  std::unordered_map<UInt64Point, std::pair<std::string, uint64_t>> result_memtable;
+
+  // point -> (seqno -> (value type, value))
+  std::unordered_map<UInt64Point, std::pair<ValueType, std::string>> result_acc;
+
   {
+  std::unordered_map<UInt64Point, std::tuple<uint64_t, ValueType, std::string>> memtable_acc;
 
   MergeIteratorBuilder merge_iter_builder(
     &cf_data->internal_comparator(),
@@ -7584,59 +7633,28 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
 
   auto merge_iter = merge_iter_builder.Finish();
 
-  for (merge_iter->SeekToFirst(); merge_iter->Valid(); merge_iter->Next()) {
-    auto seqno = GetInternalKeySeqno(merge_iter->key());
-    if (seqno > current_seqno)
-      continue;
+  *s = RectangularRangeQuery_CollectDataFromIterator<InternalIterator>(
+    merge_iter, rectangle, current_seqno, memtable_acc, result_acc);
+  
+  if (UNLIKELY(!s->ok())) {
+    ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
+    return {};
+  }
 
-    auto vt = ExtractValueType(merge_iter->key());
-    // TODO (FedMam): merge?
-    if (vt != ValueType::kTypeValue)
-      continue;
-    
-    HilbertCode code;
-    if (UNLIKELY(!TryParseHilbertCode(merge_iter->key(), &code))) {
-      *s = Status::InvalidArgument("DBImpl::RectangularRangeQueryImpl(): MemTable contains an entry with invalid key (could not extract Hilbert code out of it)");
-      ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
-      return {};
-    }
-    
-    UInt64Point point = HilbertCodeToPoint(code);
-
-    // DEBUG
-    if (point.GetX() == 17864 && point.GetY() == 16388) {
-      printf("~ %s %lu memtable\n", merge_iter->value().ToString().c_str(), seqno);
-    }
-
-    if (rectangle.Contains(point)) {
-      if (result_memtable.find(point) == result_memtable.end() ||
-          result_memtable[point].second < seqno) {
-        result_memtable[point] = {merge_iter->value().ToString(), seqno};
-      }
-    }
+  for (const auto& entry: memtable_acc) {
+    result_acc[entry.first] = {std::get<1>(entry.second), std::move(std::get<2>(entry.second))};
   }
 
   }
 
   // 2. Look in the SSTables
-  std::unordered_map<UInt64Point, std::pair<std::string, uint64_t>> result_sstable;
-
   for (const auto& level: cf_meta.levels) {
+    // data from previous levels overrides data from next levels
+    std::unordered_map<UInt64Point, std::tuple<uint64_t, ValueType, std::string>> level_acc;
+
     for (const auto& file: level.files) {
       std::string sst_file_name = GetName() + file.name;
       std::string ser_file_name = GetSERTreeFileName(sst_file_name);
-
-      // DEBUG
-      // printf("~ %s\n", sst_file_name.c_str());
-      // fflush(stdout);
-
-      // DEBUG
-      /*Status sst_es = env_->FileExists(sst_file_name);
-      if (!sst_es.ok()) {
-        printf("skipped %s\n", sst_file_name.c_str());
-        fflush(stdout);
-        continue;
-      }*/
 
       Status es = env_->FileExists(ser_file_name);
       if (es.ok()) {
@@ -7726,36 +7744,11 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
               /*stats=*/nullptr,
               /*block_contents_pinned=*/true));
           
-          for (block_iter->SeekToFirst(); block_iter->Valid(); block_iter->Next()) {
-            auto seqno = GetInternalKeySeqno(block_iter->key());
-            if (seqno > current_seqno)
-              continue;
-
-            auto vt = ExtractValueType(block_iter->key());
-            // TODO (FedMam): merge?
-            if (vt != ValueType::kTypeValue)
-              continue;
-
-            HilbertCode code;
-            if (UNLIKELY(!TryParseHilbertCode(block_iter->key(), &code))) {
-              *s = Status::InvalidArgument("DBImpl::RectangularRangeQueryImpl(): MemTable contains an entry with invalid key (could not extract Hilbert code out of it)");
-              ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
-              return {};
-            }
-
-            UInt64Point point = HilbertCodeToPoint(code);
-
-            // DEBUG
-            if (point.GetX() == 17864 && point.GetY() == 16388) {
-              printf("~ %s %lu block %s\n", block_iter->value().ToString().c_str(), seqno, ser_file_name.c_str());
-            }
-
-            if (rectangle.Contains(point)) {
-              if (result_sstable.find(point) == result_sstable.end() ||
-                  result_sstable[point].second < seqno) {
-                result_sstable[point] = {block_iter->value().ToString(), seqno};
-              }
-            }
+          *s = RectangularRangeQuery_CollectDataFromIterator<InternalIterator>(
+            block_iter.get(), rectangle, current_seqno, level_acc, result_acc);
+          if (UNLIKELY(!s->ok())) {
+            ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
+            return {};
           }
         }
       } else {
@@ -7767,51 +7760,41 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
           return {};
         }
 
-        std::unique_ptr<rocksdb::Iterator> sst_iter(reader.NewTableIterator());
+        std::unique_ptr<Iterator> sst_iter(reader.NewTableIterator());
 
-        for (sst_iter->SeekToFirst(); sst_iter->Valid(); sst_iter->Next()) {
-          auto seqno = GetInternalKeySeqno(sst_iter->key());
-          if (seqno > current_seqno)
-            continue;
-
-          auto vt = ExtractValueType(sst_iter->key());
-          // TODO (FedMam): merge?
-          if (vt != ValueType::kTypeValue)
-            continue;
-
-          HilbertCode code;
-          if (UNLIKELY(!TryParseHilbertCode(sst_iter->key(), &code))) {
-            *s = Status::InvalidArgument("DBImpl::RectangularRangeQueryImpl(): MemTable contains an entry with invalid key (could not extract Hilbert code out of it)");
-            ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
-            return {};
-          }
-
-          UInt64Point point = HilbertCodeToPoint(code);
-
-          // DEBUG
-          if (point.GetX() == 17864 && point.GetY() == 16388) {
-            printf("~ %s %lu sst %s\n", sst_iter->value().ToString().c_str(), seqno, sst_file_name.c_str());
-          }
-
-          if (rectangle.Contains(point)) {
-            if (result_sstable.find(point) == result_sstable.end() ||
-                result_sstable[point].second < seqno) {
-              result_sstable[point] = {sst_iter->value().ToString(), seqno};
-            }
-          }
+        *s = RectangularRangeQuery_CollectDataFromIterator<Iterator>(
+            sst_iter.get(), rectangle, current_seqno, level_acc, result_acc);
+        if (UNLIKELY(!s->ok())) {
+          ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
+          return {};
         }
       }
+
+      // DEBUG
+      /*printf("~ Level %d, file %s, level_acc: %zu, result_acc: %zu\n", level.level, sst_file_name.c_str(), level_acc.size(), result_acc.size());
+      fflush(stdout);
+
+      // DEBUG
+      if (result_acc.size() > (rectangle.GetRight() - rectangle.GetLeft() + 1) * (rectangle.GetBottom() - rectangle.GetTop() + 1)) {
+        for (const auto& entry: result_acc) {
+          printf("~ (%lu, %lu), %x, %s\n", entry.first.GetX(), entry.first.GetY(), entry.second.first, entry.second.second.c_str());
+        }
+        fflush(stdout);
+        assert(false);
+      }*/
+    }
+
+    for (const auto& entry: level_acc) {
+      // this point cannot already be in result_acc by implementation of RectangularRangeQuery_CollectDataFromIterator
+      result_acc[entry.first] = {std::get<1>(entry.second), std::move(std::get<2>(entry.second))};
     }
   }
 
-  // results from memtable override results from sstables
-  for (const auto& entry: result_memtable) {
-    result_sstable[entry.first] = entry.second;
-  }
-
   std::vector<std::pair<UInt64Point, std::string>> result_vector;
-  for (const auto& entry: result_sstable) {
-    result_vector.emplace_back(entry.first, entry.second.first);
+  // results from memtable override results from sstables
+  for (const auto& entry: result_acc) {
+    if (entry.second.first == ValueType::kTypeValue)
+      result_vector.emplace_back(entry.first, std::move(entry.second.second));
   }
 
   ReturnAndCleanupSuperVersion(column_family->GetID(), sv);

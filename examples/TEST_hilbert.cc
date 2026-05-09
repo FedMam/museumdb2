@@ -108,7 +108,7 @@ int main() {
     uint64_t bottom = top + (mt() % MAX_RECT_WIDTH);
     if (left > right) { auto temp = left; left = right; right = temp; }
     if (top > bottom) { auto temp = top; top = bottom; bottom = temp; }
-    UInt64Rectangle rect(left, right, top, bottom);
+    UInt64Rectangle rect(left, top, right, bottom);
 
     auto result = db->RectangularRangeQuery(opts,
       db->DefaultColumnFamily(), rect, &s);
@@ -116,6 +116,11 @@ int main() {
       printf("%s\n", s.ToString().c_str());
       assert(false);
     }
+    if (result.size() > (right - left + 1) * (bottom - top + 1)) {
+      printf("Too many results for rectangle (%lu, %lu, %lu, %lu)\n", left, top, right, bottom);
+      assert(false);
+    }
+
     for (const auto& entry: result) {
       assert(rect.Contains(entry.first));
     }
