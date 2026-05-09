@@ -7531,8 +7531,7 @@ Status RectangularRangeQuery_CollectDataFromIterator(
     TIterator* iter,
     const UInt64Rectangle& rectangle,
     const SequenceNumber& current_seqno,
-    std::unordered_map<UInt64Point, std::tuple<uint64_t, ValueType, std::string>>& acc,
-    const std::unordered_map<UInt64Point, std::pair<ValueType, std::string>>& result_acc) {
+    std::vector<std::tuple<HilbertCode, uint64_t, ValueType, std::string>>& acc) {
   for (iter->SeekToFirst(); iter->Valid(); iter->Next()) {
     auto seqno = GetInternalKeySeqno(iter->key());
     if (seqno > current_seqno)
@@ -7551,16 +7550,44 @@ Status RectangularRangeQuery_CollectDataFromIterator(
     if (!rectangle.Contains(point))
       continue;
 
-    if (result_acc.find(point) != result_acc.end())
-      continue;
-
-    if (acc.find(point) == acc.end() || std::get<0>(acc[point]) < seqno) {
-      // if (std::get<0>(acc[point]) == seqno && acc_point != candidate)
-      //   return Status::InvalidArgument("DBImpl::RectangularRangeQueryImpl(): found two different entries with the same seqno");
-
-      acc[point] = {seqno, vt, iter->value().ToString()};
-    }
+    acc.push_back({code, seqno, vt, iter->value().ToString()});
   }
+  return Status::OK();
+}
+
+Status RectangularRangeQuery_ResolveValues(std::vector<std::tuple<HilbertCode, uint64_t, ValueType, std::string>>& acc) {
+  if (acc.empty())
+    return Status::OK();
+
+  std::sort(acc.begin(), acc.end());
+
+  auto iter = acc.begin();
+  auto prev = iter;
+  ++iter;
+  while (iter != acc.end()) {
+    // Hilbert code (aka key) is equal
+    if (std::get<0>(*prev) == std::get<0>(*iter)) {
+      if (LIKELY(std::get<1>(*iter) > std::get<1>(*prev))) {
+        // seqno is larger
+        --iter;
+        iter = acc.erase(iter);
+      } else {
+        // seqnos are equal (seqno of *iter cannot be smaller because we've just sorted the array)
+        if (std::get<2>(*iter) != std::get<2>(*prev) || std::get<3>(*iter) != std::get<3>(*prev)) {
+          return Status::Corruption("DBImpl::RectangularRangeQueryImpl(): two distinct data entries with the same seqno found");
+        }
+      }
+    }
+    prev = iter;
+    ++iter;
+  }
+
+  // This means that this entry is going to overwrite all entries from
+  // files we enumerate after this one (we look in memtable -> level 0 -> level 1 -> ...) 
+  for (auto& entry: acc) {
+    std::get<1>(entry) = 0xffffffffffffffff;
+  }
+
   return Status::OK();
 }
 
@@ -7605,12 +7632,10 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
   // 1. Look in the memtables
   // TODO (FedMam): is there a more efficient way than to iterate through the whole memtable?
 
-  // point -> (seqno -> (value type, value))
-  std::unordered_map<UInt64Point, std::pair<ValueType, std::string>> result_acc;
+  // (Hilbert code, seqno, value type, value)
+  std::vector<std::tuple<HilbertCode, uint64_t, ValueType, std::string>> result_acc;
 
   {
-  std::unordered_map<UInt64Point, std::tuple<uint64_t, ValueType, std::string>> memtable_acc;
-
   MergeIteratorBuilder merge_iter_builder(
     &cf_data->internal_comparator(),
     &arena);
@@ -7634,24 +7659,23 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
   auto merge_iter = merge_iter_builder.Finish();
 
   *s = RectangularRangeQuery_CollectDataFromIterator<InternalIterator>(
-    merge_iter, rectangle, current_seqno, memtable_acc, result_acc);
+    merge_iter, rectangle, current_seqno, result_acc);
   
   if (UNLIKELY(!s->ok())) {
     ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
     return {};
   }
 
-  for (const auto& entry: memtable_acc) {
-    result_acc[entry.first] = {std::get<1>(entry.second), std::move(std::get<2>(entry.second))};
   }
 
+  *s = RectangularRangeQuery_ResolveValues(result_acc);
+  if (UNLIKELY(!s->ok())) {
+    ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
+    return {};
   }
 
   // 2. Look in the SSTables
   for (const auto& level: cf_meta.levels) {
-    // data from previous levels overrides data from next levels
-    std::unordered_map<UInt64Point, std::tuple<uint64_t, ValueType, std::string>> level_acc;
-
     for (const auto& file: level.files) {
       std::string sst_file_name = GetName() + file.name;
       std::string ser_file_name = GetSERTreeFileName(sst_file_name);
@@ -7745,7 +7769,7 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
               /*block_contents_pinned=*/true));
           
           *s = RectangularRangeQuery_CollectDataFromIterator<InternalIterator>(
-            block_iter.get(), rectangle, current_seqno, level_acc, result_acc);
+            block_iter.get(), rectangle, current_seqno, result_acc);
           if (UNLIKELY(!s->ok())) {
             ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
             return {};
@@ -7763,38 +7787,26 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
         std::unique_ptr<Iterator> sst_iter(reader.NewTableIterator());
 
         *s = RectangularRangeQuery_CollectDataFromIterator<Iterator>(
-            sst_iter.get(), rectangle, current_seqno, level_acc, result_acc);
+            sst_iter.get(), rectangle, current_seqno, result_acc);
         if (UNLIKELY(!s->ok())) {
           ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
           return {};
         }
       }
-
-      // DEBUG
-      /*printf("~ Level %d, file %s, level_acc: %zu, result_acc: %zu\n", level.level, sst_file_name.c_str(), level_acc.size(), result_acc.size());
-      fflush(stdout);
-
-      // DEBUG
-      if (result_acc.size() > (rectangle.GetRight() - rectangle.GetLeft() + 1) * (rectangle.GetBottom() - rectangle.GetTop() + 1)) {
-        for (const auto& entry: result_acc) {
-          printf("~ (%lu, %lu), %x, %s\n", entry.first.GetX(), entry.first.GetY(), entry.second.first, entry.second.second.c_str());
-        }
-        fflush(stdout);
-        assert(false);
-      }*/
     }
 
-    for (const auto& entry: level_acc) {
-      // this point cannot already be in result_acc by implementation of RectangularRangeQuery_CollectDataFromIterator
-      result_acc[entry.first] = {std::get<1>(entry.second), std::move(std::get<2>(entry.second))};
+    *s = RectangularRangeQuery_ResolveValues(result_acc);
+    if (UNLIKELY(!s->ok())) {
+      ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
+      return {};
     }
   }
 
   std::vector<std::pair<UInt64Point, std::string>> result_vector;
   // results from memtable override results from sstables
   for (const auto& entry: result_acc) {
-    if (entry.second.first == ValueType::kTypeValue)
-      result_vector.emplace_back(entry.first, std::move(entry.second.second));
+    if (std::get<2>(entry) == ValueType::kTypeValue)
+      result_vector.emplace_back(HilbertCodeToPoint(std::get<0>(entry)), std::move(std::get<3>(entry)));
   }
 
   ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
