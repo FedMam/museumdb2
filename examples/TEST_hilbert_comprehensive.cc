@@ -275,7 +275,6 @@ int main(int argc, char** argv) {
         db->CompactRange(CompactRangeOptions(), &begin_slice, &end_slice);
 
         db->WaitForCompact(WaitForCompactOptions());
-        printf("~ Compaction\n");
       }
     }
   }

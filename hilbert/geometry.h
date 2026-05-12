@@ -52,6 +52,11 @@ struct UInt64Rectangle {
     return UInt64Rectangle();
   }
 
+  // A rectangle that covers the whole [0, 2^64) x [0, 2^64) square and contains all possible points
+  static inline UInt64Rectangle Max() {
+    return UInt64Rectangle(0, 0, UINT64_MAX, UINT64_MAX);
+  }
+
   inline uint64_t GetLeft() const { return left_; }
   inline uint64_t GetTop() const { return top_; }
   inline uint64_t GetRight() const { return right_; }
@@ -68,7 +73,7 @@ struct UInt64Rectangle {
   }
 
   inline bool Intersects(const UInt64Rectangle& other) const {
-    if (!IsValid()) return false;
+    if (!IsValid() || !other.IsValid()) return false;
     return right_ >= other.left_ &&
            left_ <= other.right_ &&
            bottom_ >= other.top_ &&

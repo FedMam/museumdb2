@@ -7709,6 +7709,7 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
 
         std::vector<BlockHandle> blocks_to_seek_in;
         *s = ser_reader->Find(rectangle, &blocks_to_seek_in);
+
         if (UNLIKELY(!s->ok())) {
           ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
           return {};

@@ -15,7 +15,9 @@ HilbertTableBuilder::HilbertTableBuilder(const BlockBasedTableOptions& table_opt
   : BlockBasedTableBuilder(table_options, table_builder_options, file),
     ser_tree_builder(std::make_unique<SERTreeBuilder>(std::move(ser_tree_file), io_options, env, leaf_capacity, non_leaf_capacity)) { }
 
-void HilbertTableBuilder::Add(const Slice& ikey, const Slice& value) {
+void HilbertTableBuilder::Add(const Slice& ikey, const Slice& value) {  
+  BlockBasedTableBuilder::Add(ikey, value);
+  
   if (LIKELY(ser_tree_status.ok())) {
     bool parallel_compression_active = IsParallelCompressionActive();
     if (parallel_compression_active)
@@ -37,8 +39,6 @@ void HilbertTableBuilder::Add(const Slice& ikey, const Slice& value) {
     if (parallel_compression_active)
       parallel_emitting_mutex.Unlock();
   }
-
-  BlockBasedTableBuilder::Add(ikey, value);
 }
 
 void HilbertTableBuilder::Flush(const Slice* first_key_in_next_block) {
@@ -109,7 +109,7 @@ Status HilbertTableBuilder::Finish() {
 
   if (parallel_compression_active)
     parallel_emitting_mutex.Unlock();
-  
+
   return s;
 }
 

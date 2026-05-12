@@ -2,9 +2,6 @@
 
 #include <assert.h>
 
-// DEBUG
-// #include <iostream>
-
 namespace ROCKSDB_NAMESPACE {
 
 std::string HilbertCode::ToString() const {

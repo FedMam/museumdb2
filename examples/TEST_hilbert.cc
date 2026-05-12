@@ -26,12 +26,15 @@ using ROCKSDB_NAMESPACE::Status;
 using ROCKSDB_NAMESPACE::WriteBatch;
 using ROCKSDB_NAMESPACE::WriteOptions;
 
+using ROCKSDB_NAMESPACE::UInt64Point;
 using ROCKSDB_NAMESPACE::UInt64Rectangle;
 using ROCKSDB_NAMESPACE::HilbertCode;
 using ROCKSDB_NAMESPACE::HilbertCodeToPoint;
 using ROCKSDB_NAMESPACE::PointToHilbertCode;
 
 using ROCKSDB_NAMESPACE::Iterator;
+using ROCKSDB_NAMESPACE::CompactRangeOptions;
+using ROCKSDB_NAMESPACE::WaitForCompactOptions;
 using ROCKSDB_NAMESPACE::BlockBasedTableOptions;
 using ROCKSDB_NAMESPACE::HilbertTableFactory;
 
@@ -54,13 +57,15 @@ int main() {
   auto hilbert_factory = std::make_shared<HilbertTableFactory>(BlockBasedTableOptions());
   options.table_factory = hilbert_factory;
 
+  ReadOptions read_options;
+
   // open DB
   Status s = DB::Open(options, kDBPath, &db);
   assert(s.ok());
 
   std::mt19937_64 mt(42);
 
-  std::vector<std::pair<HilbertCode, std::string>> remembered_examples;
+  std::vector<std::pair<UInt64Point, std::string>> remembered_examples;
 
   UInt64Rectangle mbr;
 
@@ -77,8 +82,8 @@ int main() {
       batch.Put(key, value);
 
       auto point = HilbertCodeToPoint(code);
-      if (m == 0 && n % 0x10 == 0)
-        remembered_examples.emplace_back(code, value);
+      if (n % 0x100 == 0 && m == 0)
+        remembered_examples.emplace_back(point, value);
       mbr = mbr.MBR(point);
     }
     s = db->Write(WriteOptions(), &batch);
@@ -88,18 +93,17 @@ int main() {
   printf("=== Writing finished ===\n");
   fflush(stdout);
 
-  ReadOptions opts;
-  for (auto [code, expected_value]: remembered_examples) {
-    std::string received_value;
-    s = db->Get(opts, code.ToString(), &received_value);
-    assert(s.ok());
-    assert(expected_value == received_value);
-  }
+  std::string begin = HilbertCode(0, 0).ToString();
+  std::string end = HilbertCode(0xffffffffffffffffull, 0xffffffffffffffffull).ToString();
+  Slice begin_slice(begin), end_slice(end);
+  db->CompactRange(CompactRangeOptions(), &begin_slice, &end_slice);
 
-  printf("=== Reading finished ===\n");
+  db->WaitForCompact(WaitForCompactOptions());
+    
+  printf("=== Compaction finished ===\n");
   fflush(stdout);
 
-  const uint64_t MAX_RECT_WIDTH = 10;
+  const uint64_t MAX_RECT_WIDTH = 200;
 
   for (unsigned i = 0; i < 100; ++i) {
     uint64_t left = mt() % (mbr.GetRight() - mbr.GetLeft() - MAX_RECT_WIDTH) + mbr.GetLeft();
@@ -110,31 +114,38 @@ int main() {
     if (top > bottom) { auto temp = top; top = bottom; bottom = temp; }
     UInt64Rectangle rect(left, top, right, bottom);
 
-    auto result = db->RectangularRangeQuery(opts,
+    auto result = db->RectangularRangeQuery(read_options,
       db->DefaultColumnFamily(), rect, &s);
     if (!s.ok()) {
       printf("%s\n", s.ToString().c_str());
       assert(false);
     }
-    if (result.size() > (right - left + 1) * (bottom - top + 1)) {
-      printf("Too many results for rectangle (%lu, %lu, %lu, %lu)\n", left, top, right, bottom);
-      assert(false);
+
+    std::unordered_map<UInt64Point, std::string> result_map;
+    for (const auto& entry: result) {
+      result_map[entry.first] = entry.second;
     }
 
-    for (const auto& entry: result) {
-      assert(rect.Contains(entry.first));
+    for (const auto& entry: remembered_examples) {
+      if (!rect.Contains(entry.first))
+        continue;
+
+      if (result_map.find(entry.first) == result_map.end()) {
+        printf("Entry (%lu, %lu)[%s] not found in query result\n", entry.first.GetX(), entry.first.GetY(), entry.second.c_str());
+        assert(false);
+      } else if (result_map[entry.first] != entry.second) {
+        printf("Entry (%lu, %lu) error: expected [%s], got [%s]\n", entry.first.GetX(), entry.first.GetY(), entry.second.c_str(), result_map[entry.first].c_str());
+        assert(false);
+      }
     }
   }
 
   printf("=== Range query finished ===\n");
   fflush(stdout);
 
-  auto result = db->RectangularRangeQuery(opts,
+  auto result = db->RectangularRangeQuery(read_options,
     db->DefaultColumnFamily(),
-    UInt64Rectangle(0x0000000000000000ull,
-                    0x0000000000000000ull,
-                    0xffffffffffffffffull,
-                    0xffffffffffffffffull), &s);
+    UInt64Rectangle::Max(), &s);
   assert(s.ok());
   if (result.size() != EXPECTED_RESULT_NUMBER) {
     printf("Error: result size is %ld\n", result.size());
