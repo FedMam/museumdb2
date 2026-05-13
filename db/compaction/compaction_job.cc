@@ -795,12 +795,12 @@ void CompactionJob::CleanupAbortedSubcompactions() {
         Status s = env_->DeleteFile(file_path);
 
         // === spatial data support ===
-        /*if (compact_->compaction->column_family_data()->GetLatestCFOptions().spatial_data) {
+        if (compact_->compaction->column_family_data()->GetLatestCFOptions().spatial_data) {
           std::string ser_tree_file_path = GetSERTreeFileName(file_path);
           if (env_->FileExists(ser_tree_file_path).ok()) {
             s = s.UpdateIfOk(env_->DeleteFile(ser_tree_file_path));
           }
-        }*/
+        }
         // ============================
 
         if (s.ok()) {
@@ -2171,6 +2171,21 @@ Status CompactionJob::FinishCompactionOutputFile(
           cfd->GetName().c_str(), job_id_, output_number,
           meta->marked_for_compaction ? " (need compaction)" : "");
     }
+
+    // === spatial data support ===
+    if (compact_->compaction->column_family_data()->GetLatestCFOptions().spatial_data) {
+      std::string ser_tree_file_path = GetSERTreeFileName(fname);
+      if (env_->FileExists(ser_tree_file_path).ok()) {
+        if (env_->DeleteFile(ser_tree_file_path).ok()) {
+          ROCKS_LOG_WARN(
+            db_options_.info_log,
+            "[%s] [JOB %d] Unable to remove SER-tree file for table #%" PRIu64
+            " at bottom level",
+            cfd->GetName().c_str(), job_id_, output_number);
+        }
+      }
+    }
+    // ============================
 
     // Also need to remove the file from outputs, or it will be added to the
     // VersionEdit.

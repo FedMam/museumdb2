@@ -17,6 +17,9 @@
 #include "rocksdb/system_clock.h"
 #include "test_util/sync_point.h"
 #include "util/mutexlock.h"
+#include "db/dbformat.h"
+
+#include "table/hilbert/hilbert_table_util.h"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -215,6 +218,13 @@ Status DeleteScheduler::CleanupDirectory(Env* env, SstFileManagerImpl* sfm,
       // Delete the file immediately
       file_delete = env->DeleteFile(trash_file);
     }
+
+    // === spatial data support ===
+    // delete SER-tree file
+    std::string ser_file = GetSERTreeFileName(trash_file);
+    if (env->FileExists(ser_file).ok())
+      file_delete = file_delete.UpdateIfOk(env->DeleteFile(trash_file));
+    // ============================
 
     if (s.ok() && !file_delete.ok()) {
       s = file_delete;

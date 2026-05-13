@@ -15,6 +15,8 @@
 #include "rocksdb/env.h"
 #include "rocksdb/statistics.h"
 
+#include "table/hilbert/hilbert_table_util.h"
+
 namespace ROCKSDB_NAMESPACE {
 
 // Utility function to copy a file up to a specified length
@@ -144,11 +146,25 @@ Status DeleteDBFile(const ImmutableDBOptions* db_options,
                     const bool force_bg, const bool force_fg) {
   SstFileManagerImpl* sfm = static_cast_with_check<SstFileManagerImpl>(
       db_options->sst_file_manager.get());
-  if (sfm && !force_fg) {
-    return sfm->ScheduleFileDeletion(fname, dir_to_sync, force_bg);
-  } else {
-    return db_options->env->DeleteFile(fname);
+    
+  Status ds, ser_ds = Status::OK();
+
+  // === spatial data support ===
+  // delete SER-tree file
+  std::string ser_file = GetSERTreeFileName(fname);
+  if (db_options->env->FileExists(ser_file).ok()) {
+    ser_ds = db_options->env->DeleteFile(ser_file);
   }
+  // ============================
+
+  if (sfm && !force_fg) {
+    ds = sfm->ScheduleFileDeletion(fname, dir_to_sync, force_bg);
+  } else {
+    ds = db_options->env->DeleteFile(fname);
+  }
+
+  ds = ds.UpdateIfOk(ser_ds);
+  return ds;
 }
 
 Status DeleteUnaccountedDBFile(const ImmutableDBOptions* db_options,
