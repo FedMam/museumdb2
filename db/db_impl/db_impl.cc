@@ -7738,7 +7738,7 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
           /*prefetch_buffer=*/nullptr,
           sst_file_size,
           &footer);
-        
+
         for (const auto& block_handle: blocks_to_seek_in) {
           PersistentCacheOptions cache_options;
           BlockContents contents;

@@ -32,6 +32,9 @@ TEST_hilbert_minimal: librocksdb TEST_hilbert_minimal.cc
 TEST_hilbert_comprehensive: librocksdb TEST_hilbert_comprehensive.cc
 	$(CXX) $(CXXFLAGS) $@.cc -o$@ ../librocksdb.a -I../include -I.. -O2 -std=c++20 $(PLATFORM_LDFLAGS) $(PLATFORM_CXXFLAGS) $(EXEC_LDFLAGS)
 
+TEST_hilbert_compression: librocksdb TEST_hilbert_compression.cc
+	$(CXX) $(CXXFLAGS) $@.cc -o$@ ../librocksdb.a -I../include -I.. -O2 -std=c++20 $(PLATFORM_LDFLAGS) $(PLATFORM_CXXFLAGS) $(EXEC_LDFLAGS)
+
 TEST_comparison: librocksdb TEST_comparison.cc
 	$(CXX) $(CXXFLAGS) $@.cc -o$@ ../librocksdb.a -I../include -I.. -O2 -std=c++20 $(PLATFORM_LDFLAGS) $(PLATFORM_CXXFLAGS) $(EXEC_LDFLAGS)
 

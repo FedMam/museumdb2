@@ -13,3 +13,5 @@ transaction_example
 TEST_hilbert
 TEST_hilbert_minimal
 TEST_hilbert_comprehensive
+TEST_hilbert_compression
+TEST_comparison
