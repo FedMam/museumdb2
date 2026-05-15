@@ -7675,6 +7675,10 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
   }
 
   // 2. Look in the SSTables
+  auto mgr_to_use = cf_desc.options.compression_manager
+    ? cf_desc.options.compression_manager
+    : GetBuiltinV2CompressionManager();
+
   for (const auto& level: cf_meta.levels) {
     for (const auto& file: level.files) {
       std::string sst_file_name = GetName() + file.name;
@@ -7738,8 +7742,6 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
           /*prefetch_buffer=*/nullptr,
           sst_file_size,
           &footer);
-
-        auto mgr_to_use = GetBuiltinV2CompressionManager();
 
         for (const auto& block_handle: blocks_to_seek_in) {
           PersistentCacheOptions cache_options;

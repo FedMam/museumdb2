@@ -48,16 +48,18 @@ int main() {
   std::unique_ptr<DB> db;
   Options options;
   // Optimize RocksDB. This is the easiest way to get RocksDB to perform well
-  // options.IncreaseParallelism();
-  // options.OptimizeLevelStyleCompaction();
+  options.IncreaseParallelism();
+  options.OptimizeLevelStyleCompaction();
   // create the DB if it's not already present
   options.create_if_missing = true;
 
   options.spatial_data = true;
+
   auto hilbert_factory = std::make_shared<HilbertTableFactory>(BlockBasedTableOptions());
   options.table_factory = hilbert_factory;
 
-  options.compression = rocksdb::kZlibCompression;
+  options.compression = rocksdb::kLZ4Compression;
+  options.compression_opts.parallel_threads = 4;
 
   ReadOptions read_options;
 
