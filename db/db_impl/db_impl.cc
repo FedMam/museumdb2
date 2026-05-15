@@ -7739,6 +7739,8 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
           sst_file_size,
           &footer);
 
+        auto mgr_to_use = GetBuiltinV2CompressionManager();
+
         for (const auto& block_handle: blocks_to_seek_in) {
           PersistentCacheOptions cache_options;
           BlockContents contents;
@@ -7752,7 +7754,7 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
             /*do_uncompress=*/true,
             /*maybe_compressed=*/true,
             BlockType::kData,
-            /*decompressor=*/nullptr,
+            mgr_to_use->GetDecompressor().get(),
             cache_options);
 
           *s = fetcher.ReadBlockContents();
