@@ -470,6 +470,7 @@ BENCH_MAIN_SOURCES =                                                    \
   tools/db_bench.cc                                                     \
   util/filter_bench.cc                                                  \
   utilities/persistent_cache/persistent_cache_bench.cc                  \
+  hilbert/benchmark/spatial_query_benchmark_tool.cc
 
 TEST_MAIN_SOURCES =                                                     \
   cache/cache_test.cc                                                   \
