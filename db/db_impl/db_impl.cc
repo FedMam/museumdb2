@@ -7574,7 +7574,10 @@ Status RectangularRangeQuery_ResolveValues(std::vector<std::tuple<HilbertCode, u
       } else {
         // seqnos are equal (seqno of *iter cannot be smaller because we've just sorted the array)
         if (std::get<2>(*iter) != std::get<2>(*prev) || std::get<3>(*iter) != std::get<3>(*prev)) {
-          return Status::Corruption("DBImpl::RectangularRangeQueryImpl(): two distinct data entries with the same seqno found");
+          return Status::Corruption(
+            std::string("DBImpl::RectangularRangeQueryImpl(): two distinct data entries with the same seqno found: ") +
+            (std::get<2>(*prev) == kTypeValue ? std::get<3>(*prev) : "<deleted>") +
+            (std::get<2>(*iter) == kTypeValue ? std::get<3>(*iter) : "<deleted>"));
         }
       }
     }
@@ -7798,12 +7801,22 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
           return {};
         }
       }
+
+      if (level.level == 0) {
+        *s = RectangularRangeQuery_ResolveValues(result_acc);
+        if (UNLIKELY(!s->ok())) {
+          ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
+          return {};
+        }
+      }
     }
 
-    *s = RectangularRangeQuery_ResolveValues(result_acc);
-    if (UNLIKELY(!s->ok())) {
-      ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
-      return {};
+    if (level.level != 0) {
+      *s = RectangularRangeQuery_ResolveValues(result_acc);
+      if (UNLIKELY(!s->ok())) {
+        ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
+        return {};
+      }
     }
   }
 

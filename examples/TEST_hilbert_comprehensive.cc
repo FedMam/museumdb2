@@ -10,6 +10,7 @@
 #include <vector>
 #include <thread>
 #include <chrono>
+#include <filesystem>
 
 #include "rocksdb/db.h"
 #include "rocksdb/options.h"
@@ -71,8 +72,8 @@ int main(int argc, char** argv) {
 
   std::mt19937 mt(192839);
 
-  const uint32_t N_TESTS = 10000;
-  const UInt64Rectangle MBR(10, 10, 50010, 50010);
+  const uint32_t N_TESTS = 100000;
+  const UInt64Rectangle MBR(10, 10, UINT64_MAX - 10, UINT64_MAX - 10);
 
   std::deque<UInt64Point> entry_points;
   std::unordered_map<UInt64Point, std::string> entry_values;
@@ -282,6 +283,8 @@ int main(int argc, char** argv) {
   OUTPUT_STATS;
 
   db.reset();
+
+  std::filesystem::remove_all(kDBPath);
 
   return 0;
 }

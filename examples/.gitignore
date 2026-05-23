@@ -15,3 +15,4 @@ TEST_hilbert_minimal
 TEST_hilbert_comprehensive
 TEST_hilbert_compression
 TEST_comparison
+spatial_query_benchmark_tool

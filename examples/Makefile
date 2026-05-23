@@ -35,7 +35,7 @@ TEST_hilbert_comprehensive: librocksdb TEST_hilbert_comprehensive.cc
 TEST_hilbert_compression: librocksdb TEST_hilbert_compression.cc
 	$(CXX) $(CXXFLAGS) $@.cc -o$@ ../librocksdb.a -I../include -I.. -O2 -std=c++20 $(PLATFORM_LDFLAGS) $(PLATFORM_CXXFLAGS) $(EXEC_LDFLAGS)
 
-TEST_comparison: librocksdb TEST_comparison.cc
+spatial_query_benchmark_tool: librocksdb spatial_query_benchmark_tool.cc
 	$(CXX) $(CXXFLAGS) $@.cc -o$@ ../librocksdb.a -I../include -I.. -O2 -std=c++20 $(PLATFORM_LDFLAGS) $(PLATFORM_CXXFLAGS) $(EXEC_LDFLAGS)
 
 column_families_example: librocksdb column_families_example.cc

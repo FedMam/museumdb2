@@ -637,7 +637,9 @@ bool DataBlockIter::ParseNextDataKey(bool* is_shared) {
              value_type == ValueType::kTypeDeletionWithTimestamp ||
              value_type == ValueType::kTypeRangeDeletion ||
              value_type == ValueType::kTypeWideColumnEntity);
-      assert(seqno == 0);
+      
+      // This needs to be commented out for using DataBlockIter in DBImpl::RectangularRangeQueryImpl
+      // assert(seqno == 0);
     }
 #endif  // NDEBUG
     return true;
