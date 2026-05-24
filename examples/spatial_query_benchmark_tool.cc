@@ -5,6 +5,8 @@
 
 #include <iostream>
 #include <fstream>
+#include <sstream>
+#include <functional>
 #include <iomanip>
 #include <filesystem>
 #include <memory>
@@ -54,6 +56,22 @@ class CompactionTimeMeasureListener: public EventListener {
 };
 
 int main(int argc, char** argv) {
+  // === READING ARGS ===
+  if (argc < 3) {
+    std::cout<<"Usage: spatial_query_benchmark_tool <dataset.tsv> <output.tsv>"<<std::endl;
+    std::cout<<"dataset.tsv format: no header, each row: X\\tY"<<std::endl;
+    std::cout<<"output.tsv will store info about all queries. Format: no header, each row: <query-type>\\t<time>\\t<parameters>, possible query types:"<<std::endl;
+    std::cout<<"  read\\t<time>\\t<X>\\t<Y>"<<std::endl;
+    std::cout<<"  write\\t<time>\\t<N-writes>\\t<X1>\\t<Y1>\\t<value1>\\t<X2>\\t<Y2>\\t<value2>\\t..."<<std::endl;
+    std::cout<<"  delete\\t<time>\\t<N-deletes>\\t<X1>\\t<Y1>\\t<X2>\\t<Y2>\\t..."<<std::endl;
+    std::cout<<"  range\\t<time>\\t<left>\\t<top>\\t<bottom>\\t<N-entries-in-range>"<<std::endl;
+    exit(1);
+  }
+
+  std::string dataset_file_name = argv[1];
+  std::string output_file_name = argv[2];
+
+  // === CONSTANTS ===
   // for generating random values
   const std::vector<std::string> animals = { "Lion", "Tiger", "Elephant", "Giraffe", "Zebra", "Rhino", "Hippo", "Gorilla", "Orangutan", "Chimpanzee", "Kangaroo", "Koala", "Sloth", "Panda", "Moose", "Deer", "Fox", "Wolf", "Coyote", "Bear", "Otter", "Beaver", "Squirrel", "Hare", "Rabbit", "Hedgehog", "Badger", "Skunk", "Raccoon", "Seal", "Walrus", "Dolphin", "Whale", "Porpoise", "Shark", "Tuna", "Salmon", "Trout", "Carp", "Catfish", "Pike", "Mackerel", "Marlin", "Seahorse", "Jellyfish", "Octopus", "Squid", "Crab", "Lobster", "Shrimp", "Butterfly", "Moth", "Bee", "Wasp", "Ant", "Dragonfly", "Grasshopper", "Locust", "Beetle", "Ladybug", "Firefly", "Cicada", "Spider", "Scorpion", "Snake", "Cobra", "Viper", "Python", "Anaconda", "Turtle", "Tortoise", "Iguana", "Gecko", "Chameleon", "Alligator", "Crocodile", "Falcon", "Hawk", "Eagle", "Vulture", "Owl", "Sparrow", "Robin", "Finch", "Pigeon", "Dove", "Parrot", "Cockatoo", "Macaw", "Flamingo", "Pelican", "Heron", "Stork", "Crane", "Swan", "Goose", "Duck", "Turkey", "Chicken", "Peacock", "Emu", "Ostrich", "Penguin", "Platypus" };
   const std::vector<std::string> adjectives = { "Agile", "Alert", "Ancient", "Armored", "Astonishing", "Attentive", "Audacious", "Austere", "Baleful", "Bashful", "Bittersweet", "Blazing", "Blithe", "Bold", "Brazen", "Bristling", "Buoyant", "Cunning", "Capricious", "Calm", "Carnivorous", "Celestial", "Charming", "Chromatic", "Clever", "Cloaked", "Cold-blooded", "Colossal", "Cozy", "Cryptic", "Dainty", "Dauntless", "Deafening", "Deft", "Delicate", "Diminutive", "Dire", "Dapper", "Dashing", "Draconic", "Dreamlike", "Durable", "Eerie", "Elusive", "Elegant", "Endearing", "Enigmatic", "Ethereal", "Ferocious", "Fierce", "Fleet", "Fluffy", "Formidable", "Forsaken", "Frosty", "Furtive", "Gallant", "Gargantuan", "Gleaming", "Golden", "Graceful", "Grizzled", "Harmonious", "Hardy", "Hypnotic", "Imposing", "Incandescent", "Industrious", "Ingenious", "Intrepid", "Iridescent", "Jagged", "Jovial", "Keen", "Lithe", "Luminous", "Majestic", "Merciless", "Mottled", "Mystical", "Nocturnal", "Noble", "Omnivorous", "Ornate", "Outsized", "Pensive", "Placid", "Primal", "Prismatic", "Prowling", "Puny", "Radiant", "Regal", "Rugged", "Sinuous", "Sleek", "Shocked", "Stealthy", "Striking", "Tenacious" };
@@ -63,10 +81,10 @@ int main(int argc, char** argv) {
   const int WRITE_BATCH_SIZE = 50;
   const int DELETE_BATCH_SIZE = 10;
 
-  std::mt19937 mt(192837);
+  std::mt19937 mt(std::hash<std::string>{}(dataset_file_name));
   std::uniform_int_distribution<size_t> adj_dist(0, adjectives.size() - 1);
   std::uniform_int_distribution<size_t> ani_dist(0, animals.size() - 1);
-  std::mt19937_64 mt64(738291);
+  std::mt19937_64 mt64(~std::hash<std::string>{}(dataset_file_name));
 
   // === CREATING DATABASE ===
   std::unique_ptr<DB> db;
@@ -94,14 +112,6 @@ int main(int argc, char** argv) {
   }
 
   // === LOADING DATASET ===
-  if (argc < 2) {
-    std::cout<<"Usage: spatial_query_benchmark_tool <dataset.csv>"<<std::endl;
-    std::cout<<"dataset.csv format: header: `X,Y`, separator: `,`, no quotes!"<<std::endl;
-    exit(1);
-  }
-
-  std::string dataset_file_name = argv[1];
-
   std::vector<HilbertCode> entries;
 
   {
@@ -113,7 +123,6 @@ int main(int argc, char** argv) {
   }
 
   std::string dataset_line;
-  std::getline(dataset_file, dataset_line);  // header
   while (std::getline(dataset_file, dataset_line)) {
     if (dataset_line.empty() || dataset_line == "\n" || dataset_line == "\r\n")
       continue;
@@ -121,7 +130,7 @@ int main(int argc, char** argv) {
 
     std::stringstream ss(dataset_line);
     std::string x_string, y_string;
-    std::getline(ss, x_string, ',');
+    std::getline(ss, x_string, '\t');
     std::getline(ss, y_string);
 
     if (x_string.empty() || y_string.empty()) {
@@ -184,8 +193,13 @@ int main(int argc, char** argv) {
     auto __dur = std::chrono::duration_cast<std::chrono::nanoseconds>(__end - __start); \
     double __time = (double)(__dur.count()) / 1e+9;  // in seconds
 
+  std::vector<std::string> queries_info;
+
   for (int query_i = 0; query_i < N_QUERIES; ++query_i) {
     uint32_t query_type = mt() % 4;
+
+    std::ostringstream query_info;
+    query_info<<std::fixed<<std::setprecision(9);
 
     if (query_type == 0) {
       // read
@@ -204,9 +218,14 @@ int main(int argc, char** argv) {
 
       time_read.push_back(__time);
 
+      auto point = HilbertCodeToPoint(code);
+      query_info<<"read\t"<<__time<<"\t"<<point.GetX()<<"\t"<<point.GetY();
+
     } else if (query_type == 1) {
       // write
       WriteBatch batch;
+
+      std::vector<std::pair<UInt64Point, std::string>> writes_info;
 
       for (int entry_i = 0; entry_i < WRITE_BATCH_SIZE; ++entry_i) {
         auto code = entries[dist(mt)];
@@ -214,6 +233,7 @@ int main(int argc, char** argv) {
         std::string value = adjectives[adj_dist(mt)] + " " + animals[ani_dist(mt)];
 
         batch.Put(Slice(key), Slice(value));
+        writes_info.push_back({HilbertCodeToPoint(code), value});
       }
 
       START_CLOCK;
@@ -227,15 +247,22 @@ int main(int argc, char** argv) {
 
       time_write.push_back(__time);
 
+      query_info<<"write\t"<<__time<<"\t"<<WRITE_BATCH_SIZE;
+      for (const auto& [point, value]: writes_info)
+        query_info<<"\t"<<point.GetX()<<"\t"<<point.GetY()<<"\t"<<value;
+
     } else if (query_type == 2) {
       // delete
       WriteBatch batch;
+
+      std::vector<UInt64Point> deletes_info;
 
       for (int entry_i = 0; entry_i < DELETE_BATCH_SIZE; ++entry_i) {
         auto code = entries[dist(mt)];
         std::string key = code.ToString();
 
         batch.Delete(Slice(key));
+        deletes_info.push_back(HilbertCodeToPoint(code));
       }
 
       START_CLOCK;
@@ -249,14 +276,12 @@ int main(int argc, char** argv) {
 
       time_delete.push_back(__time);
 
+      query_info<<"delete\t"<<__time<<"\t"<<DELETE_BATCH_SIZE;
+      for (const auto& point: deletes_info)
+        query_info<<"\t"<<point.GetX()<<"\t"<<point.GetY();
+
     } else if (query_type == 3) {
       // range
-      /*
-      uint64_t x_frac = mt() % 58 + 2, y_frac = mt() % 58 + 2;
-      uint64_t x_size = mt64() % ((1 << (x_frac + 1)) - (1 << x_frac)) + (1 << x_frac);
-      uint64_t y_size = mt64() % ((1 << (y_frac + 1)) - (1 << y_frac)) + (1 << y_frac);
-      */
-
       auto code_entry_c = entries[dist(mt)];
       auto point_c = HilbertCodeToPoint(code_entry_c);
       auto x_c = point_c.GetX(), y_c = point_c.GetY();
@@ -275,18 +300,6 @@ int main(int argc, char** argv) {
       uint64_t right = (left <= UINT64_MAX - x_size) ? (left + x_size) : UINT64_MAX;
       uint64_t bottom = (top <= UINT64_MAX - y_size) ? (top + y_size) : UINT64_MAX;
 
-      /*
-      auto code_entry_a = entries[dist(mt)];
-      auto code_entry_b = entries[dist(mt)];
-      auto point_a = HilbertCodeToPoint(code_entry_a);
-      auto point_b = HilbertCodeToPoint(code_entry_b);
-
-      uint64_t left = std::min(point_a.GetX(), point_b.GetX());
-      uint64_t top = std::min(point_a.GetY(), point_b.GetY());
-      uint64_t right = std::max(point_a.GetX(), point_b.GetX());
-      uint64_t bottom = std::max(point_a.GetY(), point_b.GetY());
-      */
-
       UInt64Rectangle rect(left, top, right, bottom);
 
       START_CLOCK;
@@ -301,7 +314,11 @@ int main(int argc, char** argv) {
 
       time_range.push_back(__time);
       num_entries_range.push_back(range_result.size());
+
+      query_info<<"range\t"<<__time<<"\t"<<left<<"\t"<<top<<"\t"<<right<<"\t"<<bottom<<"\t"<<range_result.size();
     }
+
+    queries_info.push_back(query_info.str());
   }
 
   s = db->WaitForCompact(WaitForCompactOptions());
@@ -373,6 +390,24 @@ int main(int argc, char** argv) {
   db.reset();
 
   std::filesystem::remove_all(kDBPath);
+
+  // === WRITE QUERY INFO ===
+
+  std::ofstream output_file(output_file_name, std::ios::out | std::ios::trunc);
+  if (output_file.fail()) {
+    std::cerr<<"Error writing query info to file: "<<output_file_name<<std::endl;
+    exit(255);
+  }
+
+  for (const auto& row: queries_info) {
+    output_file<<row<<std::endl;
+
+    if (output_file.fail()) {
+      std::cerr<<"Error writing query info: `"<<row<<"` to file: "<<output_file_name<<std::endl;
+      exit(255);
+    }
+  }
+  output_file.close();
 
   return 0;
 }
