@@ -49,6 +49,7 @@
 #include "rocksdb/advanced_options.h"
 #include "rocksdb/cache.h"
 #include "rocksdb/env.h"
+#include "rocksdb/rate_limiter.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/slice_transform.h"
 #include "rocksdb/statistics.h"
@@ -61,6 +62,7 @@
 #include "rocksdb/utilities/transaction.h"
 #include "rocksdb/utilities/transaction_db.h"
 #include "rocksdb/write_batch.h"
+#include "rocksdb/write_buffer_manager.h"
 #include "test_util/testutil.h"
 #include "util/coding.h"
 #include "util/compression.h"
@@ -114,6 +116,7 @@ DECLARE_double(memtable_prefix_bloom_size_ratio);
 DECLARE_bool(memtable_whole_key_filtering);
 DECLARE_int32(open_files);
 DECLARE_bool(open_files_async);
+DECLARE_bool(async_wal_precreate);
 DECLARE_uint64(compressed_secondary_cache_size);
 DECLARE_int32(compressed_secondary_cache_numshardbits);
 DECLARE_int32(secondary_cache_update_interval);
@@ -190,6 +193,7 @@ DECLARE_string(db);
 DECLARE_string(secondaries_base);
 DECLARE_bool(test_secondary);
 DECLARE_string(expected_values_dir);
+DECLARE_int32(num_dbs);
 DECLARE_bool(expected_state_trace_debug);
 DECLARE_int64(expected_state_trace_debug_key);
 DECLARE_int32(expected_state_trace_debug_max_logs);
@@ -279,7 +283,9 @@ DECLARE_bool(use_full_merge_v1);
 DECLARE_int32(sync_wal_one_in);
 DECLARE_bool(avoid_unnecessary_blocking_io);
 DECLARE_bool(write_dbid_to_manifest);
+DECLARE_bool(optimize_manifest_for_recovery);
 DECLARE_bool(write_identity_file);
+DECLARE_bool(reuse_manifest_on_open);
 DECLARE_bool(avoid_flush_during_recovery);
 DECLARE_bool(enforce_write_buffer_manager_during_recovery);
 DECLARE_uint64(max_write_batch_group_size_bytes);
@@ -470,18 +476,23 @@ DECLARE_int32(compaction_on_deletion_window_size);
 DECLARE_double(compaction_on_deletion_ratio);
 DECLARE_double(read_triggered_compaction_threshold);
 
+DECLARE_string(listener_uri);
+
 constexpr long KB = 1024;
 constexpr int kRandomValueMaxFactor = 3;
 constexpr int kValueMaxLen = 100;
 constexpr uint32_t kLargePrimeForCommonFactorSkew = 1872439133;
 
-// wrapped posix environment
-extern ROCKSDB_NAMESPACE::Env* db_stress_env;
-extern ROCKSDB_NAMESPACE::Env* db_stress_listener_env;
-extern std::shared_ptr<ROCKSDB_NAMESPACE::FaultInjectionTestFS> fault_fs_guard;
+// Base env from --env_uri/--fs_uri. No wrappers (no DbStressFSWrapper, no
+// fault injection). Could be PosixEnv or remote. Used for infrastructure ops
+// (threads, time, dirs, cleanup). Per-StressTest env adds fault injection +
+// DbStressFSWrapper on top for DB I/O.
+extern ROCKSDB_NAMESPACE::Env* raw_env;
 extern std::shared_ptr<ROCKSDB_NAMESPACE::SecondaryCache>
     compressed_secondary_cache;
 extern std::shared_ptr<ROCKSDB_NAMESPACE::Cache> block_cache;
+extern std::shared_ptr<ROCKSDB_NAMESPACE::WriteBufferManager> wbm;
+extern std::shared_ptr<ROCKSDB_NAMESPACE::RateLimiter> rate_limiter;
 
 extern enum ROCKSDB_NAMESPACE::CompressionType compression_type_e;
 extern enum ROCKSDB_NAMESPACE::CompressionType bottommost_compression_type_e;
@@ -826,10 +837,21 @@ AttributeGroups GenerateAttributeGroups(
     const std::vector<ColumnFamilyHandle*>& cfhs, uint32_t value_base,
     const Slice& slice);
 
-StressTest* CreateCfConsistencyStressTest();
-StressTest* CreateBatchedOpsStressTest();
-StressTest* CreateNonBatchedOpsStressTest();
-StressTest* CreateMultiOpsTxnsStressTest();
+StressTest* CreateCfConsistencyStressTest(int db_index,
+                                          const std::string& db_path,
+                                          const std::string& ev_path,
+                                          const std::string& sec_path);
+StressTest* CreateBatchedOpsStressTest(int db_index, const std::string& db_path,
+                                       const std::string& ev_path,
+                                       const std::string& sec_path);
+StressTest* CreateNonBatchedOpsStressTest(int db_index,
+                                          const std::string& db_path,
+                                          const std::string& ev_path,
+                                          const std::string& sec_path);
+StressTest* CreateMultiOpsTxnsStressTest(int db_index,
+                                         const std::string& db_path,
+                                         const std::string& ev_path,
+                                         const std::string& sec_path);
 void CheckAndSetOptionsForMultiOpsTxnStressTest();
 void InitializeHotKeyGenerator(double alpha);
 int64_t GetOneHotKeyID(double rand_seed, int64_t max_key);

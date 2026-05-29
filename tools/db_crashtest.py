@@ -19,9 +19,12 @@ remain_argv = None
 is_remote_db = False
 
 _SIGTERM_STDOUT_MARKER = "Received signal 15 (Terminated)"
+# Keep this timeout filter narrow: Poll/AbortIO only retry Linux
+# -EINTR (-4) and -EAGAIN (-11), so terminal wait_cqe errors still fail.
 _IGNORED_SIGTERM_STDERR_RE = re.compile(
-    r"^PosixRandomAccessFile::MultiRead: io_uring_submit_and_wait "
-    r"returned terminal error: -9\.$"
+    r"^(?:PosixRandomAccessFile::MultiRead: io_uring_submit_and_wait "
+    r"returned terminal error: -9\."
+    r"|(?:Poll|AbortIO): io_uring_wait_cqe failed: -(?:4|11))$"
 )
 _NO_SPACE_SUBSTRINGS = (
     "no space left on device",
@@ -30,6 +33,10 @@ _NO_SPACE_SUBSTRINGS = (
     "enospc",
 )
 _OUTPUT_PATH_RE = re.compile(r"(/[^\s]+)")
+_TSAN_OPTIONS_ENV_VAR = "TSAN_OPTIONS"
+_TSAN_SUPPRESSIONS_FILE = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "tsan_suppressions.txt")
+)
 
 
 def get_random_seed(override):
@@ -49,6 +56,16 @@ def quote_arg_for_display(arg):
         return arg
     flag, value = arg.split("=", 1)
     return f"{flag}={shlex.quote(value)}"
+
+
+def stress_cmd_env():
+    env = os.environ.copy()
+    if (
+        _TSAN_OPTIONS_ENV_VAR not in env
+        and os.path.exists(_TSAN_SUPPRESSIONS_FILE)
+    ):
+        env[_TSAN_OPTIONS_ENV_VAR] = "suppressions=" + _TSAN_SUPPRESSIONS_FILE
+    return env
 
 
 def early_argument_parsing_before_main():
@@ -143,7 +160,7 @@ default_params = {
         else random.choice(["none", "snappy", "zlib", "lz4", "lz4hc", "xpress", "zstd"])
     ),
     "checksum_type": lambda: random.choice(
-        ["kCRC32c", "kxxHash", "kxxHash64", "kXXH3"]
+        ["kNoChecksum", "kCRC32c", "kxxHash", "kxxHash64", "kXXH3"]
     ),
     "compression_max_dict_bytes": lambda: 16384 * random.randint(0, 1),
     "compression_zstd_max_train_bytes": lambda: 65536 * random.randint(0, 1),
@@ -163,21 +180,25 @@ default_params = {
     "decouple_partitioned_filters": lambda: random.choice([0, 1, 1]),
     "delpercent": 4,
     "delrangepercent": 1,
+    "db": "",
     "destroy_db_initially": 0,
+    "expected_values_dir": "",
+    "num_dbs": 1,
     "enable_pipelined_write": lambda: random.randint(0, 1),
     "enable_compaction_filter": lambda: random.choice([0, 0, 0, 1]),
     "enable_compaction_on_deletion_trigger": lambda: random.choice([0, 0, 0, 1]),
-    # `inplace_update_support` is incompatible with DB that has delete
-    # range data in memtables.
-    # Such data can result from any of the previous db stress runs
-    # using delete range.
-    # Since there is no easy way to keep track of whether delete range
-    # is used in any of the previous runs,
-    # to simpify our testing, we set `inplace_update_support` across
-    # runs and to disable delete range accordingly
-    # (see below `finalize_and_sanitize`).
-    "inplace_update_support": random.choice([0] * 9 + [1]),
-    "expected_values_dir": lambda: setup_expected_values_dir(),
+    # `inplace_update_support` is incompatible with a wide range of features.
+    # The current sanitization process is not sufficient to reliably handle
+    # this. While inplace_update_support is intended to stay on across runs
+    # in default_params, in certain runs it can be toggled off by
+    # sanitization due to some incompatible features being enabled. When
+    # inplace_update_support is off, other incompatible features such as
+    # delete range may be enabled and leave state in the DB. A later run
+    # reads default_params again with inplace_update_support on, but now
+    # operates on a DB containing delete range data from the previous run,
+    # causing stress test failures. Temporarily disabled until the
+    # sanitization can account for cross-run incompatibility.
+    "inplace_update_support": 0,
     "flush_one_in": lambda: random.choice([1000, 1000000]),
     "manual_wal_flush_one_in": lambda: random.choice([0, 1000]),
     "sync_wal_one_in": 0,
@@ -212,6 +233,7 @@ default_params = {
     "nooverwritepercent": 1,
     "open_files": lambda: random.choice([-1, -1, 100, 500000]),
     "open_files_async": lambda: random.choice([0, 1]),
+    "async_wal_precreate": lambda: random.choice([0, 1]),
     "optimize_filters_for_memory": lambda: random.randint(0, 1),
     "partition_filters": lambda: random.randint(0, 1),
     "partition_pinning": lambda: random.randint(0, 3),
@@ -328,6 +350,8 @@ default_params = {
     "avoid_unnecessary_blocking_io": random.randint(0, 1),
     "write_dbid_to_manifest": random.randint(0, 1),
     "write_identity_file": random.randint(0, 1),
+    "optimize_manifest_for_recovery": lambda: 1 if random.randint(1, 5) == 1 else 0,
+    "reuse_manifest_on_open": lambda: 1 if random.randint(1, 5) == 1 else 0,
     "avoid_flush_during_recovery": lambda: random.choice(
         [1 if t == 0 else 0 for t in range(0, 8)]
     ),
@@ -482,8 +506,7 @@ default_params = {
     "auto_refresh_iterator_with_snapshot": lambda: random.choice([0, 1]),
     "memtable_op_scan_flush_trigger": lambda: random.choice([0, 10, 100, 1000]),
     "memtable_avg_op_scan_flush_trigger": lambda: random.choice([0, 2, 20, 200]),
-    # TODO(jkangs): Change back to [0, 2, 2, 4, 16] once range tombstone conversion stabilizes
-    "min_tombstones_for_range_conversion": lambda: random.choice([0]),
+    "min_tombstones_for_range_conversion": lambda: random.choice([0, 2, 2, 4, 16]),
     "ingest_wbwi_one_in": lambda: random.choice([0, 0, 100, 500]),
     "universal_reduce_file_locking": lambda: random.randint(0, 1),
     "compression_manager": lambda: random.choice(
@@ -515,25 +538,23 @@ def is_release_mode():
     return os.environ.get(_DEBUG_LEVEL_ENV_VAR) == "0"
 
 
-def get_dbname(test_name):
+def get_db_parent_dir(test_name):
+    # Returns the --db path. C++ owns all DB dir creation (supports remote env).
     test_dir_name = "rocksdb_crashtest_" + test_name
     test_tmpdir = os.environ.get(_TEST_DIR_ENV_VAR)
     if test_tmpdir is None or test_tmpdir == "":
-        dbname = tempfile.mkdtemp(prefix=test_dir_name)
-    else:
-        dbname = test_tmpdir + "/" + test_dir_name
-        if not is_remote_db:
-            os.makedirs(dbname, exist_ok=True)
-    return dbname
+        return tempfile.mkdtemp(prefix=test_dir_name)
+    return test_tmpdir + "/" + test_dir_name
 
 
-expected_values_dir = None
+ev_parent_dir_global = None
 
 
-def setup_expected_values_dir():
-    global expected_values_dir
-    if expected_values_dir is not None:
-        return expected_values_dir
+def get_ev_parent_dir():
+    # Returns the --expected_values_dir path. Python owns all EV dir creation.
+    global ev_parent_dir_global
+    if ev_parent_dir_global is not None:
+        return ev_parent_dir_global
     expected_dir_prefix = "rocksdb_crashtest_expected_"
     test_exp_tmpdir = os.environ.get(_TEST_EXPECTED_DIR_ENV_VAR)
 
@@ -541,22 +562,11 @@ def setup_expected_values_dir():
         test_exp_tmpdir = os.environ.get(_TEST_DIR_ENV_VAR)
 
     if test_exp_tmpdir is None or test_exp_tmpdir == "":
-        expected_values_dir = tempfile.mkdtemp(prefix=expected_dir_prefix)
+        ev_parent_dir_global = tempfile.mkdtemp(prefix=expected_dir_prefix)
     else:
-        # if tmpdir is specified, store the expected_values_dir under that dir
-        expected_values_dir = test_exp_tmpdir + "/rocksdb_crashtest_expected"
-        os.makedirs(expected_values_dir, exist_ok=True)
-    return expected_values_dir
-
-
-def prepare_expected_values_dir(expected_dir, destroy_db_initially):
-    if expected_dir is None or expected_dir == "":
-        return
-
-    if destroy_db_initially and os.path.exists(expected_dir):
-        shutil.rmtree(expected_dir, True)
-
-    os.makedirs(expected_dir, exist_ok=True)
+        ev_parent_dir_global = test_exp_tmpdir + "/rocksdb_crashtest_expected"
+        os.makedirs(ev_parent_dir_global, exist_ok=True)
+    return ev_parent_dir_global
 
 
 multiops_txn_key_spaces_file = None
@@ -924,6 +934,14 @@ def finalize_and_sanitize(src_params):
         dest_params["use_direct_io_for_flush_and_compaction"] = 0
         dest_params["use_direct_reads"] = 0
         dest_params["multiscan_use_async_io"] = 0
+    if dest_params.get("min_tombstones_for_range_conversion", 0) > 0:
+        # SQFC range-query filtering installs ReadOptions::table_filter on
+        # iterators. Read-write iterators reject table_filter when read-path
+        # range tombstone conversion is enabled, because conversion must see
+        # the full relevant SST set before synthesizing a memtable tombstone.
+        dest_params["use_sqfc_for_range_queries"] = 0
+        # Delete range not compatible with inplace_update_support
+        dest_params["inplace_update_support"] = 0
     if (
         dest_params["use_direct_io_for_flush_and_compaction"] == 1
         or dest_params["use_direct_reads"] == 1
@@ -1085,6 +1103,14 @@ def finalize_and_sanitize(src_params):
         dest_params["use_timed_put_one_in"] = 0
         dest_params["test_secondary"] = 0
         dest_params["mmap_read"] = 0
+        # skip_stats_update_on_db_open leaves num_entries and
+        # num_range_deletions at 0 on the remote worker, which breaks
+        # standalone range deletion file filtering in compaction and causes
+        # input key count mismatch. This can happen even if standalone range
+        # deletion ingestion is off in the current run, because such files
+        # may have been ingested in a previous run with different options.
+        # TODO: remove after the real fix lands.
+        dest_params["skip_stats_update_on_db_open"] = 0
 
         # Disable database open fault injection to prevent test inefficiency described below.
         # When fault injection occurs during DB open, the db will wait for compaction
@@ -1499,6 +1525,7 @@ def finalize_and_sanitize(src_params):
         dest_params["read_fault_one_in"] = 0
         dest_params["memtable_prefix_bloom_size_ratio"] = 0
         dest_params["max_sequential_skip_in_iterations"] = sys.maxsize
+        dest_params["min_tombstones_for_range_conversion"] = 0
         # This option ingests a delete range that might partially overlap with
         # existing key range, which will cause a reseek that's currently not
         # supported by multiscan
@@ -1534,6 +1561,12 @@ def finalize_and_sanitize(src_params):
     # write presets that force disable_wal=1 earlier in sanitization.
     if dest_params.get("disable_wal", 0) == 1:
         dest_params["test_batches_snapshots"] = 0
+
+    if dest_params.get("num_dbs", 1) > 1:
+        # These features assume a single DB instance.
+        # See ValidateNumDbsFlags() in db_stress_tool.cc for C++ guards.
+        dest_params["clear_column_family_one_in"] = 0
+        dest_params["test_multi_ops_txns"] = 0
 
     return dest_params
 
@@ -1604,10 +1637,22 @@ def gen_cmd_params(args):
 
 def gen_cmd(params, unknown_params):
     finalzied_params = finalize_and_sanitize(params)
-    prepare_expected_values_dir(
-        finalzied_params.get("expected_values_dir"),
-        finalzied_params.get("destroy_db_initially", 0),
-    )
+    num_dbs = finalzied_params.get("num_dbs", 1)
+
+    # Python owns EV dir creation entirely (always local filesystem).
+    # For num_dbs=1: --expected_values_dir is the EV path used as-is.
+    # For num_dbs > 1: it is the parent dir; os.makedirs creates db_<i>
+    # subdirs (and the parent implicitly).
+    # C++ owns DB dir creation (see db_stress_tool.cc).
+    ev_val = finalzied_params.get("expected_values_dir", "")
+    if ev_val:
+        if finalzied_params.get("destroy_db_initially", 0) and os.path.exists(ev_val):
+            shutil.rmtree(ev_val, True)
+        if num_dbs == 1:
+            os.makedirs(ev_val, exist_ok=True)
+        else:
+            for i in range(num_dbs):
+                os.makedirs(os.path.join(ev_val, "db_" + str(i)), exist_ok=True)
     cmd = (
         [stress_cmd]
         + [
@@ -1704,9 +1749,7 @@ def collect_diagnostic_roots(base_paths, stdout, stderr):
     pruned_roots = []
     for root in sorted(roots, key=lambda path: (len(path), path)):
         if any(
-            root == existing
-            or existing == os.sep
-            or root.startswith(existing + os.sep)
+            root == existing or existing == os.sep or root.startswith(existing + os.sep)
             for existing in pruned_roots
         ):
             continue
@@ -1758,9 +1801,7 @@ def collect_directory_usage(root):
             with os.scandir(dirpath) as iterator:
                 children = sorted(list(iterator), key=lambda entry: entry.name)
         except OSError as exc:
-            errors.append(
-                (dirpath, f"failed to enumerate directory contents: {exc}")
-            )
+            errors.append((dirpath, f"failed to enumerate directory contents: {exc}"))
             return summary
 
         for child in children:
@@ -1768,9 +1809,7 @@ def collect_directory_usage(root):
                 if child.is_dir(follow_symlinks=False):
                     summary["local_dir_count"] += 1
                     child_summary = walk(child.path)
-                    summary["subtree_file_count"] += child_summary[
-                        "subtree_file_count"
-                    ]
+                    summary["subtree_file_count"] += child_summary["subtree_file_count"]
                     summary["subtree_bytes"] += child_summary["subtree_bytes"]
                     continue
 
@@ -1793,9 +1832,7 @@ def collect_directory_usage(root):
             local_usage["count"] += 1
             local_usage["bytes"] += file_size
 
-            global_usage = global_suffixes.setdefault(
-                suffix, {"count": 0, "bytes": 0}
-            )
+            global_usage = global_suffixes.setdefault(suffix, {"count": 0, "bytes": 0})
             global_usage["count"] += 1
             global_usage["bytes"] += file_size
 
@@ -1807,9 +1844,7 @@ def collect_directory_usage(root):
 
 
 def sorted_suffix_usage(suffixes):
-    return sorted(
-        suffixes.items(), key=lambda item: (-item[1]["bytes"], item[0])
-    )
+    return sorted(suffixes.items(), key=lambda item: (-item[1]["bytes"], item[0]))
 
 
 def format_directory_usage(root):
@@ -1897,7 +1932,9 @@ def diagnostic_paths(finalized_params):
 
 
 def execute_cmd(cmd, timeout=None, timeout_pstack=False):
-    child = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+    child = subprocess.Popen(
+        cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=stress_cmd_env()
+    )
     print(
         "Running db_stress with pid=%d: %s\n\n"
         % (child.pid, " ".join(quote_arg_for_display(arg) for arg in cmd))
@@ -1912,7 +1949,7 @@ def execute_cmd(cmd, timeout=None, timeout_pstack=False):
         hit_timeout = True
         if timeout_pstack:
             os.system("pstack %d" % pid)
-        child.terminate()  # SIGTERM — triggers TerminationHandler
+        child.terminate()  # SIGTERM -- triggers TerminationHandler
         try:
             outs, errs = child.communicate(timeout=3)
             print("TERMINATED %d\n" % child.pid)
@@ -1989,16 +2026,23 @@ def strip_expected_sigterm_stderr(stdout, stderr, hit_timeout):
     return stdout, stderr
 
 
-def cleanup_after_success(dbname):
-    # Use db_stress --destroy_db_and_exit, which simplifies remote DB cleanup
-    cleanup_cmd_parts = [stress_cmd, "--destroy_db_and_exit=1", "--db=" + dbname]
+def cleanup_after_success(db_arg, num_dbs=1):
+    # Delegates to db_stress --destroy_db_and_exit so cleanup uses the same
+    # Env (local or remote) that created the DB.
+    # `db_arg` is the --db value (DB path for num_dbs=1, parent dir for num_dbs>1).
+    cleanup_cmd_parts = [
+        stress_cmd,
+        "--destroy_db_and_exit=1",
+        "--db=" + db_arg,
+        "--num_dbs=" + str(num_dbs),
+    ]
     # Pass through relevant arguments for remote DB access
     for arg in remain_args:
         parts = arg.split("=", 1)
         if parts[0] in ["--env_uri", "--fs_uri"]:
             cleanup_cmd_parts.append(arg)
     print("Running DB cleanup command - %s\n" % " ".join(cleanup_cmd_parts))
-    ret = subprocess.call(cleanup_cmd_parts)
+    ret = subprocess.call(cleanup_cmd_parts, env=stress_cmd_env())
     if ret != 0:
         print("ERROR: DB cleanup returned error %d\n" % ret)
         sys.exit(2)
@@ -2056,7 +2100,15 @@ def print_and_cleanup_fault_injection_log(pid):
 # in case of unsafe crashes in RocksDB.
 def blackbox_crash_main(args, unknown_args):
     cmd_params = gen_cmd_params(args)
-    dbname = get_dbname("blackbox")
+    db_parent_dir = get_db_parent_dir("blackbox")
+    ev_parent_dir = get_ev_parent_dir()
+    num_dbs = cmd_params.get("num_dbs", 1)
+
+    if not cmd_params.get("db"):
+        cmd_params["db"] = db_parent_dir
+    if not cmd_params.get("expected_values_dir"):
+        cmd_params["expected_values_dir"] = ev_parent_dir
+
     exit_time = time.time() + cmd_params["duration"]
 
     print(
@@ -2072,7 +2124,7 @@ def blackbox_crash_main(args, unknown_args):
     while time.time() < exit_time:
         apply_random_seed_per_iteration()
         cmd, finalized_params = gen_cmd(
-            dict(list(cmd_params.items()) + list({"db": dbname}.items())), unknown_args
+            dict(list(cmd_params.items())), unknown_args
         )
 
         hit_timeout, retcode, outs, errs, pid = execute_cmd(cmd, cmd_params["interval"])
@@ -2102,7 +2154,7 @@ def blackbox_crash_main(args, unknown_args):
     cmd_params.update({"skip_verifydb": 0})
 
     cmd, finalized_params = gen_cmd(
-        dict(list(cmd_params.items()) + list({"db": dbname}.items())), unknown_args
+        dict(list(cmd_params.items())), unknown_args
     )
     hit_timeout, retcode, outs, errs, pid = execute_cmd(
         cmd, cmd_params["verify_timeout"], True
@@ -2114,14 +2166,21 @@ def blackbox_crash_main(args, unknown_args):
     print_run_output_and_exit_on_error(args, finalized_params, outs, errs)
 
     # we need to clean up after ourselves -- only do this on test success
-    cleanup_after_success(dbname)
+    cleanup_after_success(cmd_params["db"], num_dbs)
 
 
 # This python script runs db_stress multiple times. Some runs with
 # kill_random_test that causes rocksdb to crash at various points in code.
 def whitebox_crash_main(args, unknown_args):
     cmd_params = gen_cmd_params(args)
-    dbname = get_dbname("whitebox")
+    db_parent_dir = get_db_parent_dir("whitebox")
+    ev_parent_dir = get_ev_parent_dir()
+    num_dbs = cmd_params.get("num_dbs", 1)
+
+    if not cmd_params.get("db"):
+        cmd_params["db"] = db_parent_dir
+    if not cmd_params.get("expected_values_dir"):
+        cmd_params["expected_values_dir"] = ev_parent_dir
 
     cur_time = time.time()
     exit_time = cur_time + cmd_params["duration"]
@@ -2235,7 +2294,6 @@ def whitebox_crash_main(args, unknown_args):
             dict(
                 list(cmd_params.items())
                 + list(additional_opts.items())
-                + list({"db": dbname}.items())
             ),
             unknown_args,
         )
@@ -2296,7 +2354,7 @@ def whitebox_crash_main(args, unknown_args):
     # If successfully finished or timed out (we currently treat timed out test as passing)
     # Clean up after ourselves
     if succeeded or hit_timeout:
-        cleanup_after_success(dbname)
+        cleanup_after_success(cmd_params["db"], num_dbs)
 
 
 def main():
@@ -2364,9 +2422,12 @@ def main():
         blackbox_crash_main(args, unknown_args)
     if args.test_type == "whitebox":
         whitebox_crash_main(args, unknown_args)
-    # Only delete the `expected_values_dir` if test passes
-    if expected_values_dir is not None:
-        shutil.rmtree(expected_values_dir)
+    # Delete the expected values base dir if test passes.
+    # Per-DB subdirectories (db_0, db_1, ...) live under the base,
+    # so rmtree of the parent cleans everything.
+    if ev_parent_dir_global is not None:
+        if os.path.exists(ev_parent_dir_global):
+            shutil.rmtree(ev_parent_dir_global)
     if multiops_txn_key_spaces_file is not None:
         os.remove(multiops_txn_key_spaces_file)
 

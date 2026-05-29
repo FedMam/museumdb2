@@ -205,6 +205,8 @@ extern ROCKSDB_LIBRARY_API rocksdb_t* rocksdb_open(
 extern ROCKSDB_LIBRARY_API rocksdb_t* rocksdb_open_with_ttl(
     const rocksdb_options_t* options, const char* name, int ttl, char** errptr);
 
+/* If error_if_wal_file_exists is non-zero, returns an error when a non-empty
+ * WAL file exists. Empty WAL files are tolerated. */
 extern ROCKSDB_LIBRARY_API rocksdb_t* rocksdb_open_for_read_only(
     const rocksdb_options_t* options, const char* name,
     unsigned char error_if_wal_file_exists, char** errptr);
@@ -450,6 +452,8 @@ extern ROCKSDB_LIBRARY_API rocksdb_t* rocksdb_open_column_families_with_ttl(
     rocksdb_column_family_handle_t** column_family_handles, const int* ttls,
     char** errptr);
 
+/* If error_if_wal_file_exists is non-zero, returns an error when a non-empty
+ * WAL file exists. Empty WAL files are tolerated. */
 extern ROCKSDB_LIBRARY_API rocksdb_t*
 rocksdb_open_for_read_only_column_families(
     const rocksdb_options_t* options, const char* name, int num_column_families,
@@ -1216,10 +1220,14 @@ rocksdb_block_based_options_set_data_block_index_type(
 enum {
   rocksdb_block_based_table_index_block_search_type_binary = 0,
   rocksdb_block_based_table_index_block_search_type_interpolation = 1,
+  rocksdb_block_based_table_index_block_search_type_auto = 2,
 };
 extern ROCKSDB_LIBRARY_API void
 rocksdb_block_based_options_set_index_block_search_type(
     rocksdb_block_based_table_options_t*, int);  // uses one of the above enums
+extern ROCKSDB_LIBRARY_API void
+rocksdb_block_based_options_set_uniform_cv_threshold(
+    rocksdb_block_based_table_options_t*, double);
 extern ROCKSDB_LIBRARY_API void
 rocksdb_block_based_options_set_data_block_hash_ratio(
     rocksdb_block_based_table_options_t* options, double v);
@@ -1818,6 +1826,11 @@ extern ROCKSDB_LIBRARY_API void rocksdb_options_set_recycle_log_file_num(
     rocksdb_options_t*, size_t);
 extern ROCKSDB_LIBRARY_API size_t
 rocksdb_options_get_recycle_log_file_num(rocksdb_options_t*);
+// Set/get DBOptions::async_wal_precreate.
+extern ROCKSDB_LIBRARY_API void rocksdb_options_set_async_wal_precreate(
+    rocksdb_options_t*, unsigned char);
+extern ROCKSDB_LIBRARY_API unsigned char
+rocksdb_options_get_async_wal_precreate(rocksdb_options_t*);
 extern ROCKSDB_LIBRARY_API void
 rocksdb_options_set_soft_pending_compaction_bytes_limit(rocksdb_options_t* opt,
                                                         size_t v);
@@ -1980,6 +1993,12 @@ extern ROCKSDB_LIBRARY_API void rocksdb_options_set_memtable_huge_page_size(
     rocksdb_options_t*, size_t);
 extern ROCKSDB_LIBRARY_API size_t
 rocksdb_options_get_memtable_huge_page_size(rocksdb_options_t*);
+
+extern ROCKSDB_LIBRARY_API void
+rocksdb_options_set_memtable_batch_lookup_optimization(rocksdb_options_t*,
+                                                       unsigned char);
+extern ROCKSDB_LIBRARY_API unsigned char
+rocksdb_options_get_memtable_batch_lookup_optimization(rocksdb_options_t*);
 
 extern ROCKSDB_LIBRARY_API void rocksdb_options_set_max_successive_merges(
     rocksdb_options_t*, size_t);
@@ -2206,7 +2225,8 @@ enum {
   rocksdb_filter_block_read_byte,
   rocksdb_compression_dict_block_read_byte,
   rocksdb_metadata_block_read_byte,
-  rocksdb_total_metric_count = 85
+  rocksdb_blob_cache_read_byte,
+  rocksdb_total_metric_count = 86
 };
 
 extern ROCKSDB_LIBRARY_API void rocksdb_set_perf_level(int);
@@ -2386,6 +2406,11 @@ extern ROCKSDB_LIBRARY_API void rocksdb_readoptions_set_async_io(
     rocksdb_readoptions_t*, unsigned char);
 extern ROCKSDB_LIBRARY_API unsigned char rocksdb_readoptions_get_async_io(
     rocksdb_readoptions_t*);
+extern ROCKSDB_LIBRARY_API void
+rocksdb_readoptions_set_optimize_multiget_for_io(rocksdb_readoptions_t*,
+                                                 unsigned char);
+extern ROCKSDB_LIBRARY_API unsigned char
+rocksdb_readoptions_get_optimize_multiget_for_io(rocksdb_readoptions_t*);
 extern ROCKSDB_LIBRARY_API void rocksdb_readoptions_set_timestamp(
     rocksdb_readoptions_t*, const char* ts, size_t tslen);
 extern ROCKSDB_LIBRARY_API void rocksdb_readoptions_set_iter_start_ts(

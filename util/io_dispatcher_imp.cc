@@ -216,7 +216,7 @@ Status ReadSet::ReadIndex(size_t block_index, CachableEntry<Block>* out) {
 
   // Case 3: Block needs synchronous read (pending or never-dispatched blocks).
   // No ReleaseMemory() needed here because blocks reaching this path never had
-  // TryAcquireMemory() called — they were either pending prefetch or skipped
+  // TryAcquireMemory() called -- they were either pending prefetch or skipped
   // during SubmitJob. block_sizes_[block_index] may be > 0 (set during
   // SubmitJob for all uncached blocks) but that does not imply memory was
   // acquired.
@@ -984,6 +984,15 @@ std::vector<size_t> IODispatcherImpl::Impl::ExecuteAsyncIO(
                              async_state.get(), &async_state->io_handle,
                              &async_state->del_fn,
                              direct_io ? &async_state->aligned_buf : nullptr);
+
+    if (s.IsNotSupported()) {
+      // Async IO may be compiled in but unavailable at runtime. Fall back to
+      // the synchronous coalesced path for these blocks.
+      for (const auto idx : coalesced_block_indices[i]) {
+        fallback_block_indices.push_back(idx);
+      }
+      continue;
+    }
 
     if (!s.ok()) {
       // Actual error - surface to caller
