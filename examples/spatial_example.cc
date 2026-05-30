@@ -3,13 +3,15 @@
 //  COPYING file in the root directory) and Apache 2.0 License
 //  (found in the LICENSE.Apache file in the root directory).
 
-#include <cstdio>
+#include <iostream>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <random>
 #include <vector>
 #include <thread>
 #include <chrono>
+#include <filesystem>
 
 #include "rocksdb/db.h"
 #include "rocksdb/options.h"
@@ -39,9 +41,9 @@ using ROCKSDB_NAMESPACE::BlockBasedTableOptions;
 using ROCKSDB_NAMESPACE::HilbertTableFactory;
 
 #if defined(OS_WIN)
-std::string kDBPath = "C:\\Windows\\TEMP\\rocksdb_TEST_hilbert";
+std::string kDBPath = "C:\\Windows\\TEMP\\rocksdb_spatial_example";
 #else
-std::string kDBPath = "/tmp/rocksdb_TEST_hilbert";
+std::string kDBPath = "/tmp/rocksdb_spatial_example";
 #endif
 
 int main() {
@@ -156,6 +158,7 @@ int main() {
   fflush(stdout);
 
   db.reset();
+  std::filesystem::remove_all(kDBPath);
 
   return 0;
 }

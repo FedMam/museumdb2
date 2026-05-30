@@ -40,9 +40,9 @@ using ROCKSDB_NAMESPACE::BlockBasedTableOptions;
 using ROCKSDB_NAMESPACE::HilbertTableFactory;
 
 #if defined(OS_WIN)
-std::string kDBPath = "C:\\Windows\\TEMP\\rocksdb_TEST_hilbert_comprehensive";
+std::string kDBPath = "C:\\Windows\\TEMP\\rocksdb_spatial_benchmark_example";
 #else
-std::string kDBPath = "/tmp/rocksdb_TEST_hilbert_comprehensive";
+std::string kDBPath = "/tmp/rocksdb_spatial_benchmark_example";
 #endif
 
 int main(int argc, char** argv) {
@@ -61,6 +61,8 @@ int main(int argc, char** argv) {
   auto hilbert_factory = std::make_shared<HilbertTableFactory>(BlockBasedTableOptions());
   options.table_factory = hilbert_factory;
 
+  options.write_buffer_size = 524288;
+
   WriteOptions write_options;
   ReadOptions read_options;
 
@@ -72,7 +74,7 @@ int main(int argc, char** argv) {
 
   std::mt19937 mt(192839);
 
-  const uint32_t N_TESTS = 100000;
+  const uint32_t N_TESTS = 10000;
   const UInt64Rectangle MBR(10, 10, UINT64_MAX - 10, UINT64_MAX - 10);
 
   std::deque<UInt64Point> entry_points;
@@ -267,7 +269,7 @@ int main(int argc, char** argv) {
       total_range_result_size += result.size();
     }
     tests_run += 1;
-    
+
     if (do_manual_compaction) {
       if ((test_i + 1) % (N_TESTS / 10) == 0) {
         std::string begin = HilbertCode(0, 0).ToString();
