@@ -27,6 +27,7 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include <ranges>
 
 #include "db/arena_wrapped_db_iter.h"
 #include "db/attribute_group_iterator_impl.h"
@@ -7929,15 +7930,17 @@ namespace {
 
 // result_acc is needed so that we can skip keys that were found
 // at a previous level and thus already recorded in result_acc
+// current_level_priority: files of lower levels have lower priority; memtable has highest priority
 template<typename TIterator>
 Status RectangularRangeQuery_CollectDataFromIterator(
     TIterator* iter,
     const UInt64Rectangle& rectangle,
-    const SequenceNumber& current_seqno,
-    std::vector<std::tuple<HilbertCode, uint64_t, ValueType, std::string>>& acc) {
+    const SequenceNumber& current_snapshot_seqno,
+    std::unordered_map<HilbertCode, std::tuple<uint64_t, ValueType, std::string, uint32_t>>& acc,
+    uint32_t current_level_priority) {
   for (iter->SeekToFirst(); iter->Valid(); iter->Next()) {
     auto seqno = GetInternalKeySeqno(iter->key());
-    if (seqno > current_seqno)
+    if (seqno > current_snapshot_seqno)
       continue;
 
     auto vt = ExtractValueType(iter->key());
@@ -7953,47 +7956,16 @@ Status RectangularRangeQuery_CollectDataFromIterator(
     if (!rectangle.Contains(point))
       continue;
 
-    acc.push_back({code, seqno, vt, iter->value().ToString()});
-  }
-  return Status::OK();
-}
-
-Status RectangularRangeQuery_ResolveValues(std::vector<std::tuple<HilbertCode, uint64_t, ValueType, std::string>>& acc) {
-  if (acc.empty())
-    return Status::OK();
-
-  std::sort(acc.begin(), acc.end());
-
-  auto iter = acc.begin();
-  auto prev = iter;
-  ++iter;
-  while (iter != acc.end()) {
-    // Hilbert code (aka key) is equal
-    if (std::get<0>(*prev) == std::get<0>(*iter)) {
-      if (LIKELY(std::get<1>(*iter) > std::get<1>(*prev))) {
-        // seqno is larger
-        --iter;
-        iter = acc.erase(iter);
-      } else {
-        // seqnos are equal (seqno of *iter cannot be smaller because we've just sorted the array)
-        if (std::get<2>(*iter) != std::get<2>(*prev) || std::get<3>(*iter) != std::get<3>(*prev)) {
-          return Status::Corruption(
-            std::string("DBImpl::RectangularRangeQueryImpl(): two distinct data entries with the same seqno found: ") +
-            (std::get<2>(*prev) == kTypeValue ? std::get<3>(*prev) : "<deleted>") +
-            (std::get<2>(*iter) == kTypeValue ? std::get<3>(*iter) : "<deleted>"));
-        }
+    auto acc_iter = acc.find(code);
+    if (acc_iter == acc.end()) {
+      acc[code] = {seqno, vt, iter->value().ToString(), current_level_priority};
+    } else {
+      const auto& entry = acc_iter->second;
+      if (std::get<3>(entry) < current_level_priority || std::get<0>(entry) < seqno) {
+        acc[code] = {seqno, vt, iter->value().ToString(), current_level_priority};
       }
     }
-    prev = iter;
-    ++iter;
   }
-
-  // This means that this entry is going to overwrite all entries from
-  // files we enumerate after this one (we look in memtable -> level 0 -> level 1 -> ...) 
-  for (auto& entry: acc) {
-    std::get<1>(entry) = 0xffffffffffffffff;
-  }
-
   return Status::OK();
 }
 
@@ -8035,58 +8007,22 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
 
   ColumnFamilyData* cf_data = static_cast_with_check<ColumnFamilyHandleImpl>(column_family)->cfd();
 
-  // 1. Look in the memtables
-  // TODO (FedMam): is there a more efficient way than to iterate through the whole memtable?
+  // Files of lower levels have lower priorities, memtable has the highest priority.
+  // For convenience, we'll be iterating through levels in reverse order and then memtable
+  // so that we visit files in ascending order of their priorities.
+  uint32_t current_level_priority = 0;
+  // Hilbert code -> (seqno, value type, value, level priority)
+  std::unordered_map<HilbertCode, std::tuple<uint64_t, ValueType, std::string, uint32_t>> result_acc;
 
-  // (Hilbert code, seqno, value type, value)
-  std::vector<std::tuple<HilbertCode, uint64_t, ValueType, std::string>> result_acc;
-
-  {
-  MergeIteratorBuilder merge_iter_builder(
-    &cf_data->internal_comparator(),
-    &arena);
-  
-  InternalIterator* mem_iter(sv->mem->NewIterator(
-    read_options,
-    sv->GetSeqnoToTimeMapping(),
-    &arena,
-    /*prefix_extractor=*/nullptr,
-    /*for_flush=*/false));
-
-  merge_iter_builder.AddIterator(mem_iter);
-
-  sv->imm->AddIterators(
-    read_options,
-    sv->GetSeqnoToTimeMapping(),
-    /*prefix_extractor=*/nullptr,
-    &merge_iter_builder,
-    /*add_range_tombstone_iter=*/false);
-
-  auto merge_iter = merge_iter_builder.Finish();
-
-  *s = RectangularRangeQuery_CollectDataFromIterator<InternalIterator>(
-    merge_iter, rectangle, current_seqno, result_acc);
-  
-  if (UNLIKELY(!s->ok())) {
-    ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
-    return {};
-  }
-
-  }
-
-  *s = RectangularRangeQuery_ResolveValues(result_acc);
-  if (UNLIKELY(!s->ok())) {
-    ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
-    return {};
-  }
-
-  // 2. Look in the SSTables
+  // 2. Look in the SSTables in reverse
   auto mgr_to_use = cf_desc.options.compression_manager
     ? cf_desc.options.compression_manager
     : GetBuiltinV2CompressionManager();
 
-  for (const auto& level: cf_meta.levels) {
-    for (const auto& file: level.files) {
+  std::vector<LevelMetaData> levels_rev = cf_meta.levels;
+
+  for (const auto& level: cf_meta.levels | std::views::reverse) {
+    for (const auto& file: level.files | std::views::reverse) {
       std::string sst_file_name = GetName() + file.name;
       std::string ser_file_name = GetSERTreeFileName(sst_file_name);
 
@@ -8180,7 +8116,7 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
               /*block_contents_pinned=*/true));
           
           *s = RectangularRangeQuery_CollectDataFromIterator<InternalIterator>(
-            block_iter.get(), rectangle, current_seqno, result_acc);
+            block_iter.get(), rectangle, current_seqno, result_acc, current_level_priority);
           if (UNLIKELY(!s->ok())) {
             ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
             return {};
@@ -8198,36 +8134,62 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
         std::unique_ptr<Iterator> sst_iter(reader.NewTableIterator());
 
         *s = RectangularRangeQuery_CollectDataFromIterator<Iterator>(
-            sst_iter.get(), rectangle, current_seqno, result_acc);
+            sst_iter.get(), rectangle, current_seqno, result_acc, current_level_priority);
         if (UNLIKELY(!s->ok())) {
           ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
           return {};
         }
       }
 
-      if (level.level == 0) {
-        *s = RectangularRangeQuery_ResolveValues(result_acc);
-        if (UNLIKELY(!s->ok())) {
-          ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
-          return {};
-        }
-      }
+      if (level.level == 0)
+        ++current_level_priority;
     }
 
-    if (level.level != 0) {
-      *s = RectangularRangeQuery_ResolveValues(result_acc);
-      if (UNLIKELY(!s->ok())) {
-        ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
-        return {};
-      }
-    }
+    if (level.level != 0)
+      ++current_level_priority;
+  }
+
+  // 2. Look in the memtables
+  // TODO (FedMam): is there a more efficient way than to iterate through the whole memtable?
+  ++current_level_priority;
+  {
+  MergeIteratorBuilder merge_iter_builder(
+    &cf_data->internal_comparator(),
+    &arena);
+  
+  InternalIterator* mem_iter(sv->mem->NewIterator(
+    read_options,
+    sv->GetSeqnoToTimeMapping(),
+    &arena,
+    /*prefix_extractor=*/nullptr,
+    /*for_flush=*/false));
+
+  merge_iter_builder.AddIterator(mem_iter);
+
+  sv->imm->AddIterators(
+    read_options,
+    sv->GetSeqnoToTimeMapping(),
+    /*prefix_extractor=*/nullptr,
+    &merge_iter_builder,
+    /*add_range_tombstone_iter=*/false);
+
+  auto merge_iter = merge_iter_builder.Finish();
+
+  *s = RectangularRangeQuery_CollectDataFromIterator<InternalIterator>(
+    merge_iter, rectangle, current_seqno, result_acc, current_level_priority);
+  
+  if (UNLIKELY(!s->ok())) {
+    ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
+    return {};
+  }
+
   }
 
   std::vector<std::pair<UInt64Point, std::string>> result_vector;
   // results from memtable override results from sstables
-  for (const auto& entry: result_acc) {
-    if (std::get<2>(entry) == ValueType::kTypeValue)
-      result_vector.emplace_back(HilbertCodeToPoint(std::get<0>(entry)), std::move(std::get<3>(entry)));
+  for (const auto& [code, entry]: result_acc) {
+    if (std::get<1>(entry) == ValueType::kTypeValue)
+      result_vector.emplace_back(HilbertCodeToPoint(code), std::move(std::get<2>(entry)));
   }
 
   ReturnAndCleanupSuperVersion(column_family->GetID(), sv);
