@@ -7925,9 +7925,6 @@ void DBImpl::TrackOrUntrackFiles(
 
 // === spatial data support ===
 
-// DEBUG: remove later
-#define RRQI_MAP_TYPE std::unordered_map
-
 // helper functions for DBImpl::RectangularRangeQueryImpl
 namespace {
 
@@ -7939,7 +7936,7 @@ Status RectangularRangeQuery_CollectDataFromIterator(
     TIterator* iter,
     const UInt64Rectangle& rectangle,
     const SequenceNumber& current_snapshot_seqno,
-    RRQI_MAP_TYPE<HilbertCode, std::tuple<uint64_t, ValueType, std::string, uint32_t>>& acc,
+    std::unordered_map<HilbertCode, std::tuple<uint64_t, ValueType, std::string, uint32_t>>& acc,
     uint32_t current_level_priority) {
   for (iter->SeekToFirst(); iter->Valid(); iter->Next()) {
     auto seqno = GetInternalKeySeqno(iter->key());
@@ -8015,7 +8012,7 @@ std::vector<std::pair<UInt64Point, std::string>> DBImpl::RectangularRangeQueryIm
   // so that we visit files in ascending order of their priorities.
   uint32_t current_level_priority = 0;
   // Hilbert code -> (seqno, value type, value, level priority)
-  RRQI_MAP_TYPE<HilbertCode, std::tuple<uint64_t, ValueType, std::string, uint32_t>> result_acc;
+  std::unordered_map<HilbertCode, std::tuple<uint64_t, ValueType, std::string, uint32_t>> result_acc;
 
   // 2. Look in the SSTables in reverse
   auto mgr_to_use = cf_desc.options.compression_manager
