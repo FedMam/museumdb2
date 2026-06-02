@@ -4,6 +4,8 @@
 #include "hilbert/geometry.h"
 
 #include <string>
+#include <algorithm>
+#include <functional>
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -94,12 +96,12 @@ struct HilbertCode {
 // This function computes the distance of the point on a Hilbert curve
 // built in the [0, 2^N)x[0, 2^N) square, where N is the length
 // in bits of the two coordinates of the point.
-HilbertCode PointToHilbertCode(const UInt64Point& point);
+[[gnu::pure]] HilbertCode PointToHilbertCode(const UInt64Point& point);
 
 // This function accepts the distance of a point on a Hilbert curve and
 // returns the coordinates of that point. The Hilbert curve is assumed
 // to have been built in the [0, 2^64)x[0, 2^64) square.
-UInt64Point HilbertCodeToPoint(const HilbertCode& hilbertCode);
+[[gnu::pure]] UInt64Point HilbertCodeToPoint(const HilbertCode& hilbertCode);
 
 // A wrapper of VarLenPoint2D that automatically computes the Hilbert value
 // for that point.
@@ -119,6 +121,17 @@ struct PointWithHilbertCode {
  private:
   UInt64Point point_;
   HilbertCode hilbert_code_;
+};
+
+} // namespace ROCKSDB_NAMESPACE
+
+namespace std {
+
+template<>
+struct hash<ROCKSDB_NAMESPACE::HilbertCode> {
+  size_t operator()(const ROCKSDB_NAMESPACE::HilbertCode& code) const {
+    return hash<ROCKSDB_NAMESPACE::UInt64Point>{}(HilbertCodeToPoint(code));
+  }
 };
 
 }
